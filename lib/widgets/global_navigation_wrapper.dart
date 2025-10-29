@@ -7,6 +7,7 @@ import '../screens/reels_screen.dart';
 import '../screens/add_options_screen.dart';
 import '../screens/baba_pages_screen.dart';
 import '../profile_ui.dart';
+import '../utils/video_manager.dart';
 
 class GlobalNavigationWrapper extends StatefulWidget {
   final Widget child;
@@ -62,6 +63,12 @@ class _GlobalNavigationWrapperState extends State<GlobalNavigationWrapper> {
   }
 
   void _onTabTapped(int index) {
+    // If leaving reels section (index 1), pause all videos
+    if (_currentIndex == 1 && index != 1) {
+      print('GlobalNavigation: Leaving reels section, pausing videos');
+      VideoManager().pauseCurrentVideo();
+    }
+    
     // Only initialize the page if it hasn't been initialized yet
     if (_initializedPages[index] == null) {
       print('GlobalNavigation: Lazy loading screen $index');

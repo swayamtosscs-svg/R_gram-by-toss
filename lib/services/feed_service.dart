@@ -9,6 +9,8 @@ import 'baba_page_post_service.dart';
 import 'baba_page_reel_service.dart';
 import 'privacy_service.dart';
 import 'custom_http_client.dart';
+import 'follow_state_service.dart';
+import 'posts_management_service.dart';
 
 class FeedService {
   static const String _baseUrl = 'http://103.14.120.163:8081/api';
@@ -117,7 +119,7 @@ class FeedService {
     required String token,
     required String currentUserId,
     int page = 1,
-    int limit = 20,
+    int limit = 9999, // Unlimited - load all posts
   }) async {
     try {
       print('FeedService: Fetching mixed feed posts (followed users + Baba Ji) for user: $currentUserId');
@@ -473,7 +475,16 @@ class FeedService {
     try {
       print('FeedService: Checking if user $currentUserId is following Babji...');
       
-      // Get Baba pages to check follow status
+      // First, check FollowStateService cache for faster results
+      final followedPageIds = await FollowStateService.getFollowedPageIds(currentUserId);
+      if (followedPageIds.isNotEmpty) {
+        print('FeedService: Found ${followedPageIds.length} followed Baba pages in cache: $followedPageIds');
+        return true; // User is following at least one Baba page
+      }
+      
+      print('FeedService: No followed Baba pages in cache, checking server...');
+      
+      // Get Baba pages to check follow status from server
       final response = await http.get(
         Uri.parse('http://103.14.120.163:8081/api/baba-pages?page=1&limit=50'),
         headers: {
@@ -504,7 +515,15 @@ class FeedService {
                 final followJson = jsonDecode(followResponse.body);
                 if (followJson['success'] == true && followJson['data'] != null) {
                   final isFollowing = followJson['data']['isFollowing'] ?? false;
+                  
+                  // Save to cache for future checks
                   if (isFollowing) {
+                    await FollowStateService.saveFollowState(
+                      userId: currentUserId,
+                      pageId: babaPageId,
+                      isFollowing: true,
+                    );
+                    
                     print('FeedService: User is following Babji page: ${babaPage['name'] ?? 'Baba Ji'} ($babaPageId)');
                     return true;
                   }
@@ -603,70 +622,41 @@ class FeedService {
     }
   }
   
-  /// Internal method to load posts from a specific user
+  /// Internal method to load posts from a specific user using PostsManagementService
   static Future<List<Post>> _loadUserPostsFromMediaAPI(String userId, String token) async {
     try {
-      print('FeedService: Fetching posts for user: $userId');
-      final response = await CustomHttpClient.get(
-        Uri.parse('http://103.14.120.163:8081/api/media/upload?userId=$userId'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
+      print('FeedService: Fetching posts for user: $userId using PostsManagementService');
+      
+      // Use PostsManagementService to get posts for this user
+      final response = await PostsManagementService.retrievePosts(
+        token: token,
+        userId: userId,
+        limit: 100, // Get all posts for this user
+        offset: 0,
       );
 
-      print('FeedService: Media API response for user $userId: ${response.statusCode}');
+      print('FeedService: PostsManagementService response for user $userId: success=${response.success}');
       
-      if (response.statusCode == 200) {
-        final jsonResponse = jsonDecode(response.body);
+      if (response.success && response.posts.isNotEmpty) {
+        print('FeedService: Found ${response.posts.length} posts for user $userId using PostsManagementService');
         
-        if (jsonResponse['success'] == true && jsonResponse['data'] != null) {
-          final List<dynamic> mediaData = jsonResponse['data']['media'] ?? [];
-          print('FeedService: Found ${mediaData.length} media items for user $userId');
-          final List<Post> posts = [];
-
-          for (final media in mediaData) {
-            // Only include posts (not stories)
-            if (media['title']?.toLowerCase().contains('story') != true) {
-              try {
-                final post = Post(
-                  id: media['_id'] ?? media['id'] ?? '',
-                  userId: media['uploadedBy']?['_id'] ?? media['userId'] ?? userId,
-                  username: media['uploadedBy']?['username'] ?? media['username'] ?? 'Unknown User',
-                  userAvatar: media['uploadedBy']?['avatar'] ?? media['userAvatar'] ?? '',
-                  caption: media['title'] ?? media['caption'] ?? 'A post by ${media['uploadedBy']?['username'] ?? 'Unknown User'}',
-                  imageUrl: media['resourceType'] == 'video' ? null : (media['secureUrl'] ?? media['imageUrl'] ?? (media['publicUrl'] != null ? 'http://103.14.120.163:8081${media['publicUrl']}' : null)),
-                  videoUrl: media['resourceType'] == 'video' ? (media['secureUrl'] ?? media['videoUrl'] ?? (media['publicUrl'] != null ? 'http://103.14.120.163:8081${media['publicUrl']}' : null)) : null,
-                  type: _parsePostType(media['resourceType'] ?? 'image'),
-                  likes: media['likes'] ?? 0,
-                  comments: media['comments'] ?? 0,
-                  shares: media['shares'] ?? 0,
-                  isLiked: media['isLiked'] ?? false,
-                  createdAt: media['createdAt'] != null 
-                      ? DateTime.parse(media['createdAt']) 
-                      : DateTime.now(),
-                  hashtags: List<String>.from(media['tags'] ?? []),
-                  thumbnailUrl: media['resourceType'] == 'video' ? (media['thumbnailUrl'] ?? media['secureUrl'] ?? (media['publicUrl'] != null ? 'http://103.14.120.163:8081${media['publicUrl']}' : null)) : null,
-                );
-                posts.add(post);
-                print('FeedService: Created media post: ${post.id} by ${post.username} (${post.userId})');
-                print('FeedService: Media data: ${media['_id']} - ${media['title']}');
-                print('FeedService: Post type: ${post.type}, isReel: ${post.isReel}, videoUrl: ${post.videoUrl}');
-              } catch (e) {
-                print('FeedService: Fallback: Error creating post from media: $e');
-              }
-            }
-          }
-
-          print('FeedService: Successfully fetched ${posts.length} posts for user $userId');
-          print('FeedService: Posts for user $userId: ${posts.map((p) => '${p.id}(${p.type})').join(', ')}');
-          return posts;
-        }
+        // Filter out videos/reels - only show image posts in home feed
+        final imagePosts = response.posts.where((post) => 
+          post.type != PostType.video && 
+          post.isReel != true && 
+          post.videoUrl == null
+        ).toList();
+        
+        print('FeedService: Filtered to ${imagePosts.length} image posts (excluding videos/reels) for user $userId');
+        print('FeedService: Posts for user $userId: ${imagePosts.map((p) => '${p.id}(${p.type})').join(', ')}');
+        
+        return imagePosts;
+      } else {
+        print('FeedService: No posts found for user $userId using PostsManagementService');
+        return [];
       }
-      
-      return [];
     } catch (e) {
-      print('FeedService: Fallback: Error getting posts from user $userId: $e');
+      print('FeedService: Error getting posts from user $userId using PostsManagementService: $e');
       return [];
     }
   }
@@ -845,7 +835,7 @@ class FeedService {
     required String token,
     required String currentUserId,
     int page = 1,
-    int limit = 20,
+    int limit = 9999, // Unlimited - load all posts
   }) async {
     try {
       print('FeedService: Fetching mixed feed content for user: $currentUserId (following + Baba Ji only if following)');
@@ -1062,7 +1052,7 @@ class FeedService {
   static Future<List<Post>> getBabaJiPostsOptimized({
     required String token,
     int page = 1,
-    int limit = 10,
+    int limit = 9999, // Unlimited - load all Baba Ji posts
   }) async {
     try {
       print('FeedService: Fetching Baba Ji posts (ultra-optimized)');
@@ -1073,9 +1063,9 @@ class FeedService {
         return _getCachedBabaJiPosts(page, limit);
       }
       
-      // Get limited Baba Ji pages for faster loading using optimized client
+      // Get all Baba Ji pages using optimized client
       final babaPagesResponse = await CustomHttpClient.get(
-        Uri.parse('http://103.14.120.163:8081/api/baba-pages?page=1&limit=3'), // Further reduced for speed
+        Uri.parse('http://103.14.120.163:8081/api/baba-pages?page=1&limit=100'), // Get all Baba pages
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer $token',

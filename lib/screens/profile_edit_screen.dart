@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'dart:ui';
 import '../providers/auth_provider.dart';
 import '../models/user_model.dart';
 import '../widgets/dp_widget.dart';
@@ -65,18 +66,18 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF0EBE1), // Same as login page
+      backgroundColor: Colors.transparent,
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF0EBE1),
+        backgroundColor: Colors.white, // White background like second image
         elevation: 0,
         leading: IconButton(
           onPressed: () => _handleBackNavigation(),
-          icon: const Icon(Icons.arrow_back, color: Color(0xFF4A2C2A)), // Deep Brown
+          icon: const Icon(Icons.arrow_back, color: Colors.black), // Black icon
         ),
         title: const Text(
           'Edit profile',
           style: TextStyle(
-            color: Color(0xFF4A2C2A), // Deep Brown
+            color: Colors.black, // Black text
             fontWeight: FontWeight.w600,
             fontSize: 18,
           ),
@@ -85,15 +86,33 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
         actions: [
           IconButton(
             onPressed: () => _showLogoutMenu(),
-            icon: const Icon(Icons.more_vert, color: Color(0xFF4A2C2A)), // Deep Brown
+            icon: const Icon(Icons.more_vert, color: Colors.black), // Black icon
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        child: Form(
-          key: _formKey,
-          child: Column(
-            children: [
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Background Image
+          Image.asset(
+            'assets/images/Signup page bg.jpeg',
+            fit: BoxFit.cover,
+          ),
+          // Apply Blur Effect
+          Positioned.fill(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 3.0, sigmaY: 3.0),
+              child: Container(
+                color: Colors.transparent,
+              ),
+            ),
+          ),
+          // Main content
+          SingleChildScrollView(
+            child: Form(
+              key: _formKey,
+              child: Column(
+                children: [
               // Profile Picture Section
               _buildInstagramProfileSection(),
               
@@ -106,10 +125,12 @@ class _ProfileEditScreenState extends State<ProfileEditScreen> {
               // Save Button
               _buildSaveButton(),
               
-              const SizedBox(height: 32),
-            ],
+                  const SizedBox(height: 32),
+                ],
+              ),
+            ),
           ),
-        ),
+        ],
       ),
     );
   }

@@ -1212,40 +1212,75 @@ class ChatService {
     String? currentUserId,
   }) async {
     try {
-      print('ChatService: Sending message to user: $toUserId');
-      print('ChatService: Using token: ${token.substring(0, 20)}...');
+      print('ChatService: ========== Sending Message ==========');
+      print('ChatService: To User ID: $toUserId');
+      print('ChatService: Content: $content');
+      print('ChatService: Message Type: $messageType');
+      print('ChatService: Token: ${token.substring(0, 20)}...');
+      print('ChatService: API Endpoint: $baseUrl/quick-message');
+      
+      final requestBody = {
+        'toUserId': toUserId,
+        'content': content,
+        'messageType': messageType,
+      };
+      
+      print('ChatService: Request Body: ${jsonEncode(requestBody)}');
       
       final response = await http.post(
         Uri.parse('$baseUrl/quick-message'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
         },
-        body: jsonEncode({
-          'toUserId': toUserId,
-          'content': content,
-          'messageType': messageType,
-        }),
+        body: jsonEncode(requestBody),
+      ).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          throw Exception('Request timeout');
+        },
       );
 
-      print('ChatService: Send message response status: ${response.statusCode}');
-      print('ChatService: Send message response body: ${response.body}');
+      print('ChatService: Response Status Code: ${response.statusCode}');
+      print('ChatService: Response Headers: ${response.headers}');
+      print('ChatService: Response Body: ${response.body}');
+
+      // Parse response regardless of status code to get error details
+      Map<String, dynamic> jsonResponse;
+      try {
+        jsonResponse = jsonDecode(response.body);
+      } catch (e) {
+        print('ChatService: Error parsing response JSON: $e');
+        return {
+          'success': false,
+          'message': 'Invalid server response: ${response.body}',
+          'statusCode': response.statusCode,
+        };
+      }
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        final jsonResponse = jsonDecode(response.body);
+        // Check if response indicates success
         if (jsonResponse['success'] == true) {
-          print('ChatService: Message sent successfully');
+          print('ChatService: ✅ Message sent successfully to server!');
+          print('ChatService: Response Data: ${jsonResponse['data']}');
           
-          // Store conversation locally if we have thread info
-          if (jsonResponse['data']?['threadId'] != null) {
-            print('ChatService: Thread ID from send response: ${jsonResponse['data']['threadId']}');
+          // Verify we have required data
+          if (jsonResponse['data'] != null) {
+            final messageId = jsonResponse['data']?['messageId'];
+            final threadId = jsonResponse['data']?['threadId'];
             
-            // Store this conversation for future reference
-            if (currentUserId != null) {
+            print('ChatService: Message ID from server: $messageId');
+            print('ChatService: Thread ID from server: $threadId');
+            
+            // Store conversation locally if we have thread info
+            if (threadId != null && currentUserId != null) {
+              print('ChatService: Storing conversation with thread ID: $threadId');
+              
               await _storeMessageConversation(
                 currentUserId: currentUserId,
                 otherUserId: toUserId,
-                threadId: jsonResponse['data']['threadId'],
+                threadId: threadId,
                 lastMessage: content,
                 lastMessageTime: DateTime.now(),
               );
@@ -1254,31 +1289,55 @@ class ChatService {
               await _updateConversationThreadId(
                 currentUserId,
                 toUserId,
-                jsonResponse['data']['threadId'],
+                threadId,
               );
+              
+              print('ChatService: Conversation stored successfully');
             }
+            
+            return {
+              'success': true,
+              'data': jsonResponse['data'],
+              'message': jsonResponse['message'] ?? 'Message sent successfully',
+            };
+          } else {
+            print('ChatService: ⚠️ Warning: Response success but no data field');
+            return {
+              'success': true,
+              'data': {'messageId': DateTime.now().millisecondsSinceEpoch.toString()},
+              'message': 'Message sent (no data returned)',
+            };
           }
-          
-          return jsonResponse;
         } else {
-          print('ChatService: Send message failed: ${jsonResponse['message']}');
+          final errorMsg = jsonResponse['message'] ?? jsonResponse['error'] ?? 'Failed to send message';
+          print('ChatService: ❌ Server returned error: $errorMsg');
           return {
             'success': false,
-            'message': jsonResponse['message'] ?? 'Failed to send message',
+            'message': errorMsg,
+            'statusCode': response.statusCode,
+            'data': jsonResponse,
           };
         }
       } else {
-        print('ChatService: Send message failed: ${response.statusCode} - ${response.body}');
+        // Non-200 status code
+        final errorMsg = jsonResponse['message'] ?? jsonResponse['error'] ?? 'Server error';
+        print('ChatService: ❌ HTTP Error ${response.statusCode}: $errorMsg');
+        print('ChatService: Full Error Response: ${response.body}');
+        
         return {
           'success': false,
-          'message': 'HTTP ${response.statusCode}: ${response.body}',
+          'message': 'Server error (${response.statusCode}): $errorMsg',
+          'statusCode': response.statusCode,
+          'error': jsonResponse,
         };
       }
-    } catch (e) {
-      print('ChatService: Error sending message: $e');
+    } catch (e, stackTrace) {
+      print('ChatService: ❌ Exception sending message: $e');
+      print('ChatService: Stack trace: $stackTrace');
       return {
         'success': false,
-        'message': 'Network error: $e',
+        'message': 'Network error: ${e.toString()}',
+        'error': e.toString(),
       };
     }
   }

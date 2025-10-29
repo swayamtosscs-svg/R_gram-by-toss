@@ -9,7 +9,6 @@ import '../screens/profile_edit_screen.dart';
 import '../screens/following_screen.dart';
 import '../screens/followers_screen.dart';
 import '../utils/app_theme.dart';
-import '../services/user_media_service.dart';
 import '../services/chat_service.dart';
 import '../screens/user_profile_screen.dart'; // Added import for UserProfileScreen
 import '../screens/chat_screen.dart'; // Added import for ChatScreen
@@ -25,6 +24,8 @@ import '../services/highlight_service.dart';
 import '../screens/highlights_screen.dart';
 import '../screens/create_highlight_screen.dart';
 import '../screens/highlight_viewer_screen.dart';
+import '../services/posts_management_service.dart';
+import '../services/reels_management_service.dart';
 
 
 class ProfileScreen extends StatefulWidget {
@@ -38,6 +39,10 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
   late TabController _tabController;
   int _selectedTabIndex = 0;
   bool _isRefreshing = false;
+  List<Post> _userPosts = [];
+  List<Post> _userReels = [];
+  bool _isLoadingPosts = false;
+  bool _isLoadingReels = false;
 
   @override
   void initState() {
@@ -47,17 +52,148 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
       setState(() {
         _selectedTabIndex = _tabController.index;
       });
+      // Load data when switching tabs
+      if (_selectedTabIndex == 0) {
+        // Always reload posts when switching to posts tab
+        _loadUserPosts();
+      } else if (_selectedTabIndex == 1) {
+        // Always reload reels when switching to reels tab
+        _loadUserReels();
+      }
     });
     _checkVerificationStatus();
-    
-    // Listen for media updates to refresh post counts automatically
-    UserMediaService.onMediaUpdated = (String userId) {
-      final authProvider = Provider.of<AuthProvider>(context, listen: false);
-      if (userId == authProvider.userProfile?.id && mounted) {
-        print('ProfileScreen: Media updated for current user, refreshing...');
-        setState(() {}); // Trigger rebuild to refresh FutureBuilder
+    // Load both posts and reels initially
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadUserPosts();
+      _loadUserReels();
+    });
+  }
+
+
+
+  Future<void> _loadUserPosts() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final token = authProvider.authToken;
+    final userId = authProvider.userProfile?.id;
+
+    if (token == null || userId == null) {
+      print('ProfileScreen: Cannot load posts - token or userId is null');
+      return;
+    }
+
+    if (_isLoadingPosts) {
+      print('ProfileScreen: Already loading posts, skipping...');
+      return;
+    }
+
+    print('ProfileScreen: Loading posts for userId: $userId');
+    setState(() {
+      _isLoadingPosts = true;
+    });
+
+    try {
+      final response = await PostsManagementService.retrievePosts(
+        token: token,
+        userId: userId,
+        limit: 50,
+        offset: 0,
+      );
+
+      print('ProfileScreen: Loaded ${response.posts.length} posts');
+      if (mounted) {
+        setState(() {
+          _userPosts = response.posts;
+          _isLoadingPosts = false;
+        });
+        print('ProfileScreen: Posts updated in state, total: ${_userPosts.length}');
       }
-    };
+    } catch (e) {
+      print('ProfileScreen: Error loading posts: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingPosts = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadUserReels() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final token = authProvider.authToken;
+    final userId = authProvider.userProfile?.id;
+
+    if (token == null || userId == null) {
+      print('ProfileScreen: Cannot load reels - token or userId is null');
+      return;
+    }
+
+    if (_isLoadingReels) {
+      print('ProfileScreen: Already loading reels, skipping...');
+      return;
+    }
+
+    print('ProfileScreen: Loading reels for userId: $userId');
+    setState(() {
+      _isLoadingReels = true;
+    });
+
+    try {
+      final response = await ReelsManagementService.retrieveReels(
+        token: token,
+        userId: userId,
+        limit: 50,
+        offset: 0,
+      );
+
+      print('ProfileScreen: Loaded ${response.reels.length} reels');
+      if (mounted) {
+        setState(() {
+          _userReels = response.reels;
+          _isLoadingReels = false;
+        });
+        print('ProfileScreen: Reels updated in state, total: ${_userReels.length}');
+      }
+    } catch (e) {
+      print('ProfileScreen: Error loading reels: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingReels = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _refreshContent() async {
+    print('ProfileScreen: Refreshing content...');
+    setState(() {
+      _isRefreshing = true;
+    });
+
+    try {
+      // Clear existing data to force reload
+      setState(() {
+        _userPosts = [];
+        _userReels = [];
+      });
+
+      await Future.wait([
+        _loadUserPosts(),
+        _loadUserReels(),
+      ]);
+
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      await authProvider.refreshUserProfile();
+      
+      print('ProfileScreen: Refresh complete - Posts: ${_userPosts.length}, Reels: ${_userReels.length}');
+    } catch (e) {
+      print('ProfileScreen: Error refreshing content: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRefreshing = false;
+        });
+      }
+    }
   }
 
   Future<void> _checkVerificationStatus() async {
@@ -112,9 +248,9 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
               // Apply Blur Effect
               Positioned.fill(
                 child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 50, sigmaY: 50), // increase value for stronger blur
+                  filter: ImageFilter.blur(sigmaX: 3.0, sigmaY: 3.0), // Same blur as home screen
                   child: Container(
-                    color: Colors.black.withOpacity(5.2), // optional: add slight overlay tint
+                    color: Colors.transparent,
                   ),
                 ),
               ),
@@ -130,10 +266,7 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
                   _buildInstagramStyleAppBar(authProvider.userProfile!),
                   Expanded(
                     child: RefreshIndicator(
-                      onRefresh: () async {
-                        final authProvider = Provider.of<AuthProvider>(context, listen: false);
-                        await authProvider.refreshUserProfile();
-                      },
+                      onRefresh: _refreshContent,
                       child: SingleChildScrollView(
                         physics: const BouncingScrollPhysics(),
                         child: Column(
@@ -317,31 +450,17 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
                 ],
               ),
               SizedBox(height: isMobile ? 8 : 14),
-              FutureBuilder<UserMediaResponse>(
-                future: UserMediaService.forceRefreshUserMedia(userId: user.id),
-                builder: (context, snapshot) {
-                  int postsCount = user.postsCount;
-                  int reelsCount = 0;
-                  
-                  if (snapshot.hasData && snapshot.data!.success) {
-                    postsCount = snapshot.data!.posts.length;
-                    reelsCount = snapshot.data!.reels.length;
-                    print('ProfileScreen: REAL post count: $postsCount, REAL reel count: $reelsCount for ${user.username}');
-                  }
-                  
-                  return Row(
-                    children: [
-                      Expanded(child: _smallStat(icon: Icons.grid_on, value: postsCount.toString(), label: 'Posts', color: Colors.blue.shade50)),
-                      Expanded(child: _smallStat(icon: Icons.slow_motion_video_outlined, value: reelsCount.toString(), label: 'Reels', color: Colors.green.shade50)),
-                      Expanded(
-                        child: _buildFollowersStat(user),
-                      ),
-                      Expanded(
-                        child: _buildFollowingStat(user),
-                      ),
-                    ],
-                  );
-                },
+              Row(
+                children: [
+                  Expanded(child: _smallStat(icon: Icons.grid_on, value: '${_userPosts.length}', label: 'Posts', color: Colors.blue.shade50)),
+                  Expanded(child: _smallStat(icon: Icons.slow_motion_video_outlined, value: '${_userReels.length}', label: 'Reels', color: Colors.green.shade50)),
+                  Expanded(
+                    child: _buildFollowersStat(user),
+                  ),
+                  Expanded(
+                    child: _buildFollowingStat(user),
+                  ),
+                ],
               ),
               SizedBox(height: isMobile ? 12 : 20),
               // Highlights Section
@@ -918,97 +1037,71 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
       );
     }
 
-            return FutureBuilder<UserMediaResponse>(
-          future: UserMediaService.forceRefreshUserMedia(userId: user.id),
-          builder: (context, snapshot) {
-            // Debug: Log the user ID being used
-            print('ProfileScreen Stats: Using user ID: ${user.id} for ${user.username}');
-        
-        int postsCount = 0;
-        int reelsCount = 0;
-        
-        if (snapshot.hasData && snapshot.data!.success) {
-          postsCount = snapshot.data!.posts.length;
-          reelsCount = snapshot.data!.reels.length;
-          
-          // Debug logging
-          print('Profile Stats: REAL data - Total posts: ${snapshot.data!.posts.length}, Image posts: $postsCount, Reels: $reelsCount');
-          for (final post in snapshot.data!.posts) {
-            print('Profile Stats Post: ${post.id} - Type: ${post.type} - Caption: ${post.caption}');
-          }
-        } else {
-          print('ProfileScreen Stats: No data or failed for user ${user.id}');
-          if (snapshot.hasError) {
-            print('ProfileScreen Stats: Error: ${snapshot.error}');
-          }
-        }
-        
-        return Container(
-          padding: const EdgeInsets.all(16),
-          child: Column(
+    // Posts and reels functionality removed - showing 0 counts
+    return Container(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          Row(
             children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: _buildStatItemWithCount('Posts', postsCount.toString(), () => _setTabIndex(0)),
-                  ),
-                  Expanded(
-                    child: _buildStatItemWithCount('Reels', reelsCount.toString(), () => _setTabIndex(1)),
-                  ),
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => FollowersScreen(userId: user.id),
-                          ),
-                        );
-                      },
-                      child: FutureBuilder<List<Map<String, dynamic>>>(
-                        future: Provider.of<AuthProvider>(context, listen: false).getFollowersForUser(user.id),
-                        builder: (context, snapshot) {
-                          int followersCount = user.followersCount;
-                          if (snapshot.hasData) {
-                            followersCount = snapshot.data!.length;
-                          }
-                          return _buildStatItem('Followers', followersCount.toString());
-                        },
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => FollowingScreen(userId: user.id),
-                          ),
-                        );
-                      },
-                      child: FutureBuilder<List<Map<String, dynamic>>>(
-                        future: Provider.of<AuthProvider>(context, listen: false).getFollowingUsersForUser(user.id),
-                        builder: (context, snapshot) {
-                          int followingCount = user.followingCount;
-                          if (snapshot.hasData) {
-                            followingCount = snapshot.data!.length;
-                          }
-                          return _buildStatItem('Following', followingCount.toString());
-                        },
-                      ),
-                    ),
-                  ),
-                ],
+              Expanded(
+                child: _buildStatItemWithCount('Posts', '0', () => _setTabIndex(0)),
               ),
-              const SizedBox(height: 16),
-              
-              // Privacy Status Indicator
-              _buildPrivacyStatusIndicator(user),
+              Expanded(
+                child: _buildStatItemWithCount('Reels', '0', () => _setTabIndex(1)),
+              ),
+              Expanded(
+                child: GestureDetector(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => FollowersScreen(userId: user.id),
+                      ),
+                    );
+                  },
+                  child: FutureBuilder<List<Map<String, dynamic>>>(
+                    future: authProvider.getFollowersForUser(user.id),
+                    builder: (context, snapshot) {
+                      int followersCount = user.followersCount;
+                      if (snapshot.hasData) {
+                        followersCount = snapshot.data!.length;
+                      }
+                      return _buildStatItem('Followers', followersCount.toString());
+                    },
+                  ),
+                ),
+              ),
+              Expanded(
+                child: GestureDetector(
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => FollowingScreen(userId: user.id),
+                      ),
+                    );
+                  },
+                  child: FutureBuilder<List<Map<String, dynamic>>>(
+                    future: authProvider.getFollowingUsersForUser(user.id),
+                    builder: (context, snapshot) {
+                      int followingCount = user.followingCount;
+                      if (snapshot.hasData) {
+                        followingCount = snapshot.data!.length;
+                      }
+                      return _buildStatItem('Following', followingCount.toString());
+                    },
+                  ),
+                ),
+              ),
             ],
           ),
-        );
-      },
+          const SizedBox(height: 16),
+          
+          // Privacy Status Indicator
+          _buildPrivacyStatusIndicator(user),
+        ],
+      ),
     );
   }
 
@@ -1146,17 +1239,30 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
   }
 
   Widget _buildTabContent(UserModel user) {
-    // Remove fixed height to make it scrollable
-    return SizedBox(
-        height: MediaQuery.of(context).size.height * 2, // Make it very lengthy
-        child: TabBarView(
-          controller: _tabController,
-          children: [
-            _buildPostsTab(user),
-            _buildReelsTab(user),
-            _buildSavedTab(),
-          ],
-        ),
+    // Calculate proper height for TabBarView
+    final screenHeight = MediaQuery.of(context).size.height;
+    final isMobile = MediaQuery.of(context).size.width < 600;
+    
+    // Calculate available height - account for header, tabs, and bottom nav
+    double availableHeight;
+    if (isMobile) {
+      // For mobile: Leave space for header, tabs, app bar, and bottom nav
+      availableHeight = screenHeight * 0.5; // Enough space to show grid
+    } else {
+      // For desktop: More space available
+      availableHeight = screenHeight * 0.6;
+    }
+    
+    return Container(
+      height: availableHeight,
+      child: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildPostsTab(user),
+          _buildReelsTab(user),
+          _buildSavedTab(),
+        ],
+      ),
     );
   }
 
@@ -1168,145 +1274,80 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
       );
     }
     
-            return FutureBuilder<UserMediaResponse>(
-          future: UserMediaService.forceRefreshUserMedia(userId: user.id),
-          builder: (context, snapshot) {
-            // Debug: Log the user ID being used for posts tab
-            print('ProfileScreen Posts Tab: Using user ID: ${user.id} for ${user.username}');
-        
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        
-        if (snapshot.hasError) {
-          print('ProfileScreen Posts Tab: Error: ${snapshot.error}');
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline, size: 48, color: Colors.red),
-                const SizedBox(height: 16),
-                Text('Error loading posts: ${snapshot.error}'),
-              ],
-            ),
-          );
-        }
-        
-        final userMedia = snapshot.data;
-        if (userMedia == null || !userMedia.success) {
-          print('ProfileScreen Posts Tab: No data or failed for user ${user.id}');
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline, size: 48, color: Colors.red),
-                const SizedBox(height: 16),
-                Text('Failed to load posts: Unknown error'),
-              ],
-            ),
-          );
-        }
-        
-        // Get only image posts
-        final posts = userMedia.posts;
-        
-        // Debug logging
-        print('ProfileScreen Posts Tab: Found ${posts.length} REAL posts from API for user ${user.id}');
-        for (final post in posts) {
-          print('ProfileScreen Posts Tab Post: ${post.id} - ${post.caption} - ${post.imageUrl} - Type: ${post.type}');
-        }
-        
-        if (posts.isEmpty) {
-          return const Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.post_add, size: 48, color: Colors.grey),
-                const SizedBox(height: 16),
-                Text('No posts yet'),
-                Text('Share your first post!', style: TextStyle(color: Colors.grey)),
-              ],
-            ),
-          );
-        }
-        
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final isSmallScreen = constraints.maxHeight < 600;
-            
-            return GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(), // Disable GridView scroll to allow parent scroll
-              padding: EdgeInsets.all(isSmallScreen ? 12 : 16),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 0.95,
+    if (_isLoadingPosts) {
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
+    }
+
+    if (_userPosts.isEmpty) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.post_add, size: 48, color: Colors.grey),
+            SizedBox(height: 16),
+            Text('No posts yet'),
+            Text('Share your first post!', style: TextStyle(color: Colors.grey)),
+          ],
+        ),
+      );
+    }
+
+    // Display posts in grid
+    return GridView.builder(
+        padding: const EdgeInsets.all(8.0),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          crossAxisSpacing: 4,
+          mainAxisSpacing: 4,
+          childAspectRatio: 1,
+        ),
+        itemCount: _userPosts.length,
+        itemBuilder: (context, index) {
+          final post = _userPosts[index];
+          return GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => PostFullViewScreen(post: post),
+                ),
+              );
+            },
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(4),
+                image: post.imageUrl != null
+                    ? DecorationImage(
+                        image: NetworkImage(post.imageUrl!),
+                        fit: BoxFit.cover,
+                      )
+                    : null,
+                color: Colors.grey[300],
               ),
-              itemCount: posts.length,
-              itemBuilder: (context, index) {
-                  final post = posts[index];
-                  return GestureDetector(
-                    onTap: () {
-                      // Navigate to full screen post view
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => PostFullViewScreen(post: post),
-                        ),
-                      );
-                    },
-                    child: Stack(
+              child: post.videoUrl != null
+                  ? Stack(
+                      fit: StackFit.expand,
                       children: [
-                        Container(
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: [
-                              BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 10, offset: const Offset(0, 6)),
-                            ],
+                        if (post.thumbnailUrl != null)
+                          Image.network(
+                            post.thumbnailUrl!,
+                            fit: BoxFit.cover,
                           ),
-                        ),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: post.imageUrl != null
-                              ? Image.network(
-                                  post.imageUrl!,
-                                  fit: BoxFit.cover,
-                                  width: double.infinity,
-                                  height: double.infinity,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    return Container(
-                                      color: Colors.grey[200],
-                                      child: const Center(
-                                        child: Icon(Icons.image_not_supported, color: Colors.grey, size: 40),
-                                      ),
-                                    );
-                                  },
-                                )
-                              : Container(color: Colors.grey[200]),
-                        ),
-                        Positioned(
-                          right: 8,
-                          top: 8,
-                          child: Container(
-                            width: 22,
-                            height: 22,
-                            decoration: BoxDecoration(color: Colors.white.withOpacity(0.92), shape: BoxShape.circle, boxShadow: [
-                              BoxShadow(color: Colors.black.withOpacity(0.12), blurRadius: 6, offset: const Offset(0, 3)),
-                            ]),
-                            child: const Icon(Icons.more_horiz, size: 14),
+                        const Center(
+                          child: Icon(
+                            Icons.play_circle_outline,
+                            color: Colors.white,
+                            size: 32,
                           ),
                         ),
                       ],
-                    ),
-                  );
-                },
-            );
-          },
-        );
-      },
+                    )
+                  : null,
+            ),
+          );
+        },
     );
   }
 
@@ -1318,133 +1359,89 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
       );
     }
     
-    return FutureBuilder<UserMediaResponse>(
-      future: UserMediaService.getUserMedia(userId: user.id),
-      builder: (context, snapshot) {
-        // Debug: Log the username being used for reels tab
-        print('ProfileScreen Reels Tab: Using username: ${user.username} for ${user.id}');
-        
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        
-        if (snapshot.hasError) {
-          print('ProfileScreen Reels Tab: Error: ${snapshot.error}');
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline, size: 48, color: Colors.red),
-                const SizedBox(height: 16),
-                Text('Error loading reels: ${snapshot.error}'),
-              ],
-            ),
-          );
-        }
-        
-        final userMedia = snapshot.data;
-        if (userMedia == null || !userMedia.success) {
-          print('ProfileScreen Reels Tab: No data or failed for username: ${user.username}');
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline, size: 48, color: Colors.red),
-                const SizedBox(height: 16),
-                Text('Failed to load reels: Unknown error'),
-              ],
-            ),
-          );
-        }
-        
-        // Get only reels (videos)
-        final reels = userMedia.reels;
-        
-        // Debug logging
-        print('ProfileScreen Reels Tab: Found ${reels.length} reels from API for username: ${user.username}');
-        for (final reel in reels) {
-          print('ProfileScreen Reels Tab Reel: ${reel.id} - ${reel.caption} - ${reel.videoUrl} - Type: ${reel.type}');
-        }
-        
-        if (reels.isEmpty) {
-          return const Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.play_circle_outline, size: 48, color: Colors.grey),
-                const SizedBox(height: 16),
-                Text('No reels yet'),
-                Text('Share your first reel!', style: TextStyle(color: Colors.grey)),
-              ],
-            ),
-          );
-        }
-        
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            final isSmallScreen = constraints.maxHeight < 600;
-            
-            return GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(), // Disable GridView scroll to allow parent scroll
-              padding: EdgeInsets.all(isSmallScreen ? 12 : 16),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: 0.75,
+    if (_isLoadingReels) {
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
+    }
+
+    if (_userReels.isEmpty) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.play_circle_outline, size: 48, color: Colors.grey),
+            SizedBox(height: 16),
+            Text('No reels yet'),
+            Text('Share your first reel!', style: TextStyle(color: Colors.grey)),
+          ],
+        ),
+      );
+    }
+
+    // Display reels in grid
+    return GridView.builder(
+        padding: const EdgeInsets.all(8.0),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          crossAxisSpacing: 4,
+          mainAxisSpacing: 4,
+          childAspectRatio: 1,
+        ),
+        itemCount: _userReels.length,
+        itemBuilder: (context, index) {
+          final reel = _userReels[index];
+          return GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => PostFullViewScreen(post: reel),
+                ),
+              );
+            },
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(4),
+                color: Colors.grey[300],
               ),
-              itemCount: reels.length,
-              itemBuilder: (context, index) {
-                  final reel = reels[index];
-                  return GestureDetector(
-                    onTap: () {
-                      // Navigate to full screen post view
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => PostFullViewScreen(post: reel),
-                        ),
-                      );
-                    },
-                    child: Stack(
-                      children: [
-                        Container(
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: [
-                              BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 10, offset: const Offset(0, 6)),
-                            ],
-                          ),
-                        ),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: ProfileReelWidget(
-                            reel: reel,
-                            showThumbnail: true,
-                          ),
-                        ),
-                        Positioned(
-                          right: 8,
-                          top: 8,
-                          child: Container(
-                            width: 22,
-                            height: 22,
-                            decoration: BoxDecoration(color: Colors.white.withOpacity(0.92), shape: BoxShape.circle, boxShadow: [
-                              BoxShadow(color: Colors.black.withOpacity(0.12), blurRadius: 6, offset: const Offset(0, 3)),
-                            ]),
-                            child: const Icon(Icons.play_arrow, size: 14),
-                          ),
-                        ),
-                      ],
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (reel.thumbnailUrl != null)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: Image.network(
+                        reel.thumbnailUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(color: Colors.grey[300]);
+                        },
+                      ),
+                    )
+                  else if (reel.imageUrl != null)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: Image.network(
+                        reel.imageUrl!,
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) {
+                          return Container(color: Colors.grey[300]);
+                        },
+                      ),
                     ),
-                  );
-                },
-            );
-          },
-        );
-      },
+                  const Center(
+                    child: Icon(
+                      Icons.play_circle_outline,
+                      color: Colors.white,
+                      size: 32,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
     );
   }
 

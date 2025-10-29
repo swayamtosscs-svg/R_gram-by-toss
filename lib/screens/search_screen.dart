@@ -5,7 +5,6 @@ import 'dart:math';
 import '../providers/auth_provider.dart';
 import '../services/theme_service.dart';
 import '../services/chat_service.dart';
-import '../services/user_media_service.dart';
 // Removed unused imports
 import '../screens/user_profile_screen.dart';
 import '../screens/chat_screen.dart';
@@ -424,17 +423,8 @@ class _SearchScreenState extends State<SearchScreen> {
                   spacing: isSmallScreen ? 8 : 12,
                   runSpacing: 4,
                   children: [
-                    // Display real post count
-                    FutureBuilder<int>(
-                      future: userId.isNotEmpty ? UserMediaService.getRealPostCount(userId: userId) : Future.value(postsCount),
-                      builder: (context, snapshot) {
-                        int realPostsCount = postsCount;
-                        if (snapshot.hasData && userId.isNotEmpty) {
-                          realPostsCount = snapshot.data ?? postsCount;
-                        }
-                        return _buildStatItem('Posts', realPostsCount.toString());
-                      },
-                    ),
+                    // Posts functionality removed - showing 0
+                    _buildStatItem('Posts', '0'),
                     FutureBuilder<Map<String, int>>(
                       future: userId.isNotEmpty ? Provider.of<AuthProvider>(context, listen: false).getUserCounts(userId) : Future.value({'followers': 0, 'following': 0}),
                       builder: (context, snapshot) {

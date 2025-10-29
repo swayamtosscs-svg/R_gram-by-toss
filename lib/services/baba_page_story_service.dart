@@ -7,8 +7,7 @@ import 'custom_http_client.dart';
 import 'baba_page_service.dart';
 
 class BabaPageStoryService {
-  static const String _baseUrl = 'https://103.14.120.163:8081/api';
-  static const String _fallbackUrl = 'http://103.14.120.163:8081/api';
+  static const String _baseUrl = 'http://103.14.120.163:8081/api';
 
   /// Upload a story for a Baba page
   static Future<BabaPageStoryUploadResponse> uploadBabaPageStory({
@@ -17,39 +16,17 @@ class BabaPageStoryService {
     required String content,
     String? token,
   }) async {
-    try {
-      print('BabaPageStoryService: Uploading story for Baba page $babaPageId');
-      print('BabaPageStoryService: File path: ${mediaFile.path}');
-      print('BabaPageStoryService: Content: $content');
+    print('BabaPageStoryService: Uploading story for Baba page $babaPageId');
+    print('BabaPageStoryService: File path: ${mediaFile.path}');
+    print('BabaPageStoryService: Content: $content');
 
-      // Try HTTPS first
-      return await _uploadStoryWithUrl(
-        mediaFile: mediaFile,
-        babaPageId: babaPageId,
-        content: content,
-        token: token,
-        url: _baseUrl,
-      );
-    } catch (e) {
-      print('BabaPageStoryService: HTTPS upload failed, trying HTTP fallback: $e');
-      
-      // Try HTTP fallback if HTTPS fails
-      try {
-        return await _uploadStoryWithUrl(
-          mediaFile: mediaFile,
-          babaPageId: babaPageId,
-          content: content,
-          token: token,
-          url: _fallbackUrl,
-        );
-      } catch (fallbackError) {
-        print('BabaPageStoryService: HTTP fallback also failed: $fallbackError');
-        return BabaPageStoryUploadResponse(
-          success: false,
-          message: 'Network error: $e',
-        );
-      }
-    }
+    return await _uploadStoryWithUrl(
+      mediaFile: mediaFile,
+      babaPageId: babaPageId,
+      content: content,
+      token: token,
+      url: _baseUrl,
+    );
   }
 
   /// Upload story with a specific URL (for fallback)
@@ -142,79 +119,36 @@ class BabaPageStoryService {
         print('BabaPageStoryService: Token preview: ${token.substring(0, token.length > 20 ? 20 : token.length)}...');
       }
       
-      // Try HTTPS first
-      try {
-        final url = '$_baseUrl/baba-pages/$babaPageId/stories?page=$page&limit=$limit';
-        print('BabaPageStoryService: Making HTTPS request to: $url');
+      final url = '$_baseUrl/baba-pages/$babaPageId/stories?page=$page&limit=$limit';
+      print('BabaPageStoryService: Making HTTP request to: $url');
+      
+      final response = await http.get(
+        Uri.parse(url),
+        headers: token != null ? {'Authorization': token} : {},
+      );
+
+      print('BabaPageStoryService: Stories response status: ${response.statusCode}');
+      print('BabaPageStoryService: Stories response body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final jsonResponse = json.decode(response.body);
+        print('BabaPageStoryService: Parsed JSON response: $jsonResponse');
         
-        final response = await http.get(
-          Uri.parse(url),
-          headers: token != null ? {'Authorization': token} : {},
-        );
-
-        print('BabaPageStoryService: HTTPS Stories response status: ${response.statusCode}');
-        print('BabaPageStoryService: HTTPS Stories response body: ${response.body}');
-
-        if (response.statusCode == 200) {
-          final jsonResponse = json.decode(response.body);
-          print('BabaPageStoryService: Parsed JSON response: $jsonResponse');
-          
-          if (jsonResponse['success'] == true && jsonResponse['data'] != null) {
-            // Handle the API response format: data is directly an array of stories
-            final storiesData = jsonResponse['data'] as List<dynamic>? ?? [];
-            print('BabaPageStoryService: Retrieved ${storiesData.length} stories from HTTPS API');
-            if (storiesData.isNotEmpty) {
-              print('BabaPageStoryService: First story data: ${storiesData.first}');
-            }
-            return storiesData.map((storyJson) => BabaPageStory.fromJson(storyJson)).toList();
-          } else {
-            print('BabaPageStoryService: HTTPS API returned error: ${jsonResponse['message']}');
-            return [];
+        if (jsonResponse['success'] == true && jsonResponse['data'] != null) {
+          // Handle the API response format: data is directly an array of stories
+          final storiesData = jsonResponse['data'] as List<dynamic>? ?? [];
+          print('BabaPageStoryService: Retrieved ${storiesData.length} stories from API');
+          if (storiesData.isNotEmpty) {
+            print('BabaPageStoryService: First story data: ${storiesData.first}');
           }
+          return storiesData.map((storyJson) => BabaPageStory.fromJson(storyJson)).toList();
         } else {
-          print('BabaPageStoryService: Failed to fetch stories with HTTPS status: ${response.statusCode}');
+          print('BabaPageStoryService: API returned error: ${jsonResponse['message']}');
           return [];
         }
-      } catch (e) {
-        print('BabaPageStoryService: HTTPS fetch failed, trying HTTP fallback: $e');
-        
-        // Try HTTP fallback
-        try {
-          final fallbackUrl = '$_fallbackUrl/baba-pages/$babaPageId/stories?page=$page&limit=$limit';
-          print('BabaPageStoryService: Making HTTP fallback request to: $fallbackUrl');
-          
-          final response = await http.get(
-            Uri.parse(fallbackUrl),
-            headers: token != null ? {'Authorization': token} : {},
-          );
-
-          print('BabaPageStoryService: HTTP Stories response status: ${response.statusCode}');
-          print('BabaPageStoryService: HTTP Stories response body: ${response.body}');
-
-          if (response.statusCode == 200) {
-            final jsonResponse = json.decode(response.body);
-            print('BabaPageStoryService: HTTP Parsed JSON response: $jsonResponse');
-            
-            if (jsonResponse['success'] == true && jsonResponse['data'] != null) {
-              // Handle the API response format: data is directly an array of stories
-              final storiesData = jsonResponse['data'] as List<dynamic>? ?? [];
-              print('BabaPageStoryService: Retrieved ${storiesData.length} stories from HTTP API');
-              if (storiesData.isNotEmpty) {
-                print('BabaPageStoryService: HTTP First story data: ${storiesData.first}');
-              }
-              return storiesData.map((storyJson) => BabaPageStory.fromJson(storyJson)).toList();
-            } else {
-              print('BabaPageStoryService: HTTP API returned error: ${jsonResponse['message']}');
-              return [];
-            }
-          } else {
-            print('BabaPageStoryService: Failed to fetch stories with HTTP status: ${response.statusCode}');
-            return [];
-          }
-        } catch (fallbackError) {
-          print('BabaPageStoryService: HTTP fallback also failed: $fallbackError');
-          return [];
-        }
+      } else {
+        print('BabaPageStoryService: Failed to fetch stories with status: ${response.statusCode}');
+        return [];
       }
     } catch (e) {
       print('BabaPageStoryService: Error fetching stories: $e');
@@ -233,47 +167,20 @@ class BabaPageStoryService {
     try {
       print('BabaPageStoryService: Deleting story $storyId for Baba page $babaPageId');
       
-      // Try HTTPS first
-      try {
-        final response = await http.delete(
-          Uri.parse('$_baseUrl/baba-pages/$babaPageId/stories/$storyId'),
-          headers: token != null ? {'Authorization': token} : {},
-        );
+      final response = await http.delete(
+        Uri.parse('$_baseUrl/baba-pages/$babaPageId/stories/$storyId'),
+        headers: token != null ? {'Authorization': token} : {},
+      );
 
-        print('BabaPageStoryService: Delete response status: ${response.statusCode}');
-        print('BabaPageStoryService: Delete response body: ${response.body}');
+      print('BabaPageStoryService: Delete response status: ${response.statusCode}');
+      print('BabaPageStoryService: Delete response body: ${response.body}');
 
-        if (response.statusCode == 200 || response.statusCode == 204) {
-          final jsonResponse = json.decode(response.body);
-          return jsonResponse['success'] == true;
-        } else {
-          print('BabaPageStoryService: Failed to delete story with status: ${response.statusCode}');
-          return false;
-        }
-      } catch (e) {
-        print('BabaPageStoryService: HTTPS delete failed, trying HTTP fallback: $e');
-        
-        // Try HTTP fallback
-        try {
-          final response = await http.delete(
-            Uri.parse('$_fallbackUrl/baba-pages/$babaPageId/stories/$storyId'),
-            headers: token != null ? {'Authorization': token} : {},
-          );
-
-          print('BabaPageStoryService: HTTP Delete response status: ${response.statusCode}');
-          print('BabaPageStoryService: HTTP Delete response body: ${response.body}');
-
-          if (response.statusCode == 200 || response.statusCode == 204) {
-            final jsonResponse = json.decode(response.body);
-            return jsonResponse['success'] == true;
-          } else {
-            print('BabaPageStoryService: Failed to delete story with HTTP status: ${response.statusCode}');
-            return false;
-          }
-        } catch (fallbackError) {
-          print('BabaPageStoryService: HTTP fallback delete also failed: $fallbackError');
-          return false;
-        }
+      if (response.statusCode == 200 || response.statusCode == 204) {
+        final jsonResponse = json.decode(response.body);
+        return jsonResponse['success'] == true;
+      } else {
+        print('BabaPageStoryService: Failed to delete story with status: ${response.statusCode}');
+        return false;
       }
     } catch (e) {
       print('BabaPageStoryService: Error deleting story: $e');

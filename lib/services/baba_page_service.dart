@@ -414,6 +414,60 @@ class BabaPageService {
     }
   }
 
+  /// Check if user is following a Baba Ji page
+  static Future<Map<String, dynamic>> checkFollowStatus({
+    required String pageId,
+    required String userId,
+    required String token,
+  }) async {
+    try {
+      print('BabaPageService: Checking follow status for page: $pageId, user: $userId');
+      
+      final response = await http.get(
+        Uri.parse('$baseUrl/baba-pages/$pageId/follow-status/$userId'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      print('BabaPageService: Follow status response status: ${response.statusCode}');
+      print('BabaPageService: Follow status response body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final jsonResponse = jsonDecode(response.body);
+        print('BabaPageService: Parsed response: $jsonResponse');
+        
+        // Ensure data structure is correct
+        if (jsonResponse['data'] == null && jsonResponse['isFollowing'] != null) {
+          // Handle case where data is at root level
+          return {
+            'success': true,
+            'data': {
+              'isFollowing': jsonResponse['isFollowing'],
+            },
+          };
+        }
+        
+        return jsonResponse;
+      } else {
+        final errorResponse = jsonDecode(response.body);
+        return {
+          'success': false,
+          'message': errorResponse['message'] ?? 'Failed to check follow status',
+          'data': {'isFollowing': false},
+        };
+      }
+    } catch (e) {
+      print('BabaPageService: Error checking follow status: $e');
+      return {
+        'success': false,
+        'message': 'Error checking follow status: $e',
+        'data': {'isFollowing': false},
+      };
+    }
+  }
+
   /// Delete Baba Ji page display picture
   static Future<Map<String, dynamic>> deleteBabaPageDP({
     required String babaPageId,

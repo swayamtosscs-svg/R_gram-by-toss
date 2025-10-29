@@ -5,7 +5,6 @@ import '../providers/auth_provider.dart';
 import '../models/post_model.dart';
 import '../screens/followers_screen.dart';
 import '../screens/following_screen.dart';
-import '../services/user_media_service.dart';
 import '../services/feed_refresh_service.dart';
 import '../services/chat_service.dart';
 import '../screens/chat_screen.dart';
@@ -19,6 +18,8 @@ import '../services/highlight_service.dart';
 import '../screens/highlights_screen.dart';
 import '../screens/highlight_viewer_screen.dart';
 import '../test_follow_status_debug.dart';
+import '../services/posts_management_service.dart';
+import '../services/reels_management_service.dart';
 
 class UserProfileScreen extends StatefulWidget {
   final String userId;
@@ -68,17 +69,20 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
-    _loadUserMedia();
+    _tabController.addListener(() {
+      // Load data when switching tabs
+      if (_tabController.index == 0 && _userPosts.isEmpty) {
+        _loadUserPosts();
+      } else if (_tabController.index == 1 && _userReels.isEmpty) {
+        _loadUserReels();
+      }
+    });
     _checkFollowingStatus();
     _loadRealCounts();
-    
-    // Listen for media updates to refresh post counts automatically
-    UserMediaService.onMediaUpdated = (String userId) {
-      if (userId == widget.userId && mounted) {
-        print('UserProfileScreen: Media updated for ${widget.username}, refreshing...');
-        _loadUserMedia();
-      }
-    };
+    // Load posts initially
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadUserPosts();
+    });
   }
 
   @override
@@ -137,44 +141,104 @@ class _UserProfileScreenState extends State<UserProfileScreen>
 
 
 
-  Future<void> _loadUserMedia() async {
+  Future<void> _loadUserPosts() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final token = authProvider.authToken;
+    final targetUserId = _targetUserId;
+
+    if (token == null) {
+      print('UserProfileScreen: Cannot load posts - token is null');
+      return;
+    }
+
+    if (_isLoadingPosts) {
+      print('UserProfileScreen: Already loading posts, skipping...');
+      return;
+    }
+
+    print('UserProfileScreen: Loading posts for userId: $targetUserId');
     setState(() {
       _isLoadingPosts = true;
+    });
+
+    try {
+      final response = await PostsManagementService.retrievePosts(
+        token: token,
+        userId: targetUserId, // Load posts for the target user (other user)
+        limit: 50,
+        offset: 0,
+      );
+
+      print('UserProfileScreen: Loaded ${response.posts.length} posts for user $targetUserId');
+      if (mounted) {
+        setState(() {
+          _userPosts = response.posts;
+          _isLoadingPosts = false;
+        });
+        print('UserProfileScreen: Posts updated in state, total: ${_userPosts.length}');
+      }
+    } catch (e) {
+      print('UserProfileScreen: Error loading posts: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingPosts = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadUserReels() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final token = authProvider.authToken;
+    final targetUserId = _targetUserId;
+
+    if (token == null) {
+      print('UserProfileScreen: Cannot load reels - token is null');
+      return;
+    }
+
+    if (_isLoadingReels) {
+      print('UserProfileScreen: Already loading reels, skipping...');
+      return;
+    }
+
+    print('UserProfileScreen: Loading reels for userId: $targetUserId');
+    setState(() {
       _isLoadingReels = true;
     });
 
     try {
-      print('Loading REAL media data for user: ${widget.username} (${widget.userId})');
-      
-      // Use force refresh to ensure we get the latest post counts from API
-      final userMedia = await UserMediaService.forceRefreshUserMedia(userId: widget.userId);
-      
+      final response = await ReelsManagementService.retrieveReels(
+        token: token,
+        userId: targetUserId, // Load reels for the target user (other user)
+        limit: 50,
+        offset: 0,
+      );
+
+      print('UserProfileScreen: Loaded ${response.reels.length} reels for user $targetUserId');
       if (mounted) {
         setState(() {
-          _userPosts = userMedia.posts; // Use posts from UserMediaService
-          _userReels = userMedia.reels; // Use reels from UserMediaService
-          _isLoadingPosts = false;
+          _userReels = response.reels;
           _isLoadingReels = false;
         });
-        
-        print('Loaded REAL data: ${_userPosts.length} posts and ${_userReels.length} reels for user ${widget.username}');
-        print('Total media count: ${_userPosts.length + _userReels.length}');
+        print('UserProfileScreen: Reels updated in state, total: ${_userReels.length}');
       }
     } catch (e) {
-      print('Error loading user media: $e');
+      print('UserProfileScreen: Error loading reels: $e');
       if (mounted) {
         setState(() {
-          _isLoadingPosts = false;
           _isLoadingReels = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to load media: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
       }
     }
+  }
+
+  Future<void> _loadUserMedia() async {
+    // This method is kept for compatibility, but now calls the specific methods
+    await Future.wait([
+      _loadUserPosts(),
+      _loadUserReels(),
+    ]);
   }
 
   // Get total media count (posts + reels)

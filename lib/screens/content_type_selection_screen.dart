@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'story_upload_screen.dart';
 import 'post_upload_screen.dart';
 import 'reel_upload_screen.dart';
+import '../providers/auth_provider.dart';
 
 class ContentTypeSelectionScreen extends StatelessWidget {
   const ContentTypeSelectionScreen({Key? key}) : super(key: key);
@@ -174,21 +176,53 @@ class ContentTypeSelectionScreen extends StatelessWidget {
   }
 
   void _navigateToPostUpload(BuildContext context) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const PostUploadScreen(),
-      ),
-    );
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (authProvider.authToken != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => PostUploadScreen(
+            token: authProvider.authToken!,
+          ),
+        ),
+      ).then((success) {
+        if (success == true) {
+          // Navigate to profile screen to see the new post
+          Navigator.pushNamed(context, '/profile');
+        }
+      });
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please login to upload posts'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   void _navigateToReelUpload(BuildContext context) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const ReelUploadScreen(),
-      ),
-    );
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (authProvider.authToken != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => const ReelUploadScreen(),
+        ),
+      ).then((success) {
+        if (success == true) {
+          // Navigate to profile screen to see the new reel
+          Navigator.pushNamed(context, '/profile');
+        }
+      });
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please login to upload reels'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   void _navigateToStoryUpload(BuildContext context) {

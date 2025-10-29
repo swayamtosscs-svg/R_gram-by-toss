@@ -10,8 +10,8 @@ import '../services/api_service.dart';
 import '../services/baba_page_service.dart';
 import '../services/baba_page_reel_service.dart';
 import '../services/local_storage_service.dart';
+import '../services/baba_like_service.dart';
 import '../services/dp_service.dart';
-import '../services/user_media_service.dart';
 import '../services/feed_refresh_service.dart';
 import '../services/follow_state_service.dart';
 import '../widgets/user_comment_dialog.dart';
@@ -27,7 +27,7 @@ class ReelsScreen extends StatefulWidget {
   State<ReelsScreen> createState() => _ReelsScreenState();
 }
 
-class _ReelsScreenState extends State<ReelsScreen> {
+class _ReelsScreenState extends State<ReelsScreen> with WidgetsBindingObserver {
   final PageController _pageController = PageController();
   final VideoManager _videoManager = VideoManager();
   
@@ -38,32 +38,55 @@ class _ReelsScreenState extends State<ReelsScreen> {
   Map<String, bool> _likeStates = {}; // Track like state for each post
   Map<String, int> _likeCounts = {}; // Track like counts for each post
   bool _isCheckingFollowStatus = false; // Track if follow status check is in progress
+  bool _isScreenActive = true; // Track if this screen is currently active
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _setupVideoManager();
     _loadReels();
     
     // Listen to route changes to pause video when screen is pushed/popped
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final navigator = Navigator.of(context);
       // Pause video when this screen is no longer active (e.g., when navigating to profile)
       // This ensures video stops when navigating away from reels screen
     });
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive || state == AppLifecycleState.detached) {
+      // Pause video when app goes to background or becomes inactive
+      _videoManager.pauseCurrentVideo();
+      print('ReelsScreen: App lifecycle changed to $state, paused video');
+    }
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Pause video if modal route is active (paused)
-    if (ModalRoute.of(context)?.isCurrent == false) {
-      _videoManager.pauseCurrentVideo();
+    // Check if this route is currently active
+    final route = ModalRoute.of(context);
+    if (route != null) {
+      final isActive = route.isCurrent;
+      if (_isScreenActive != isActive) {
+        _isScreenActive = isActive;
+        print('ReelsScreen: Screen active state changed to $_isScreenActive');
+        
+        if (!_isScreenActive) {
+          // Screen is not active, pause video and audio
+          _videoManager.pauseCurrentVideo();
+          print('ReelsScreen: Paused video because screen became inactive');
+        }
+      }
     }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _videoManager.pauseCurrentVideo(); // Pause video before disposing
     _videoManager.reset();
     _pageController.dispose();
@@ -128,31 +151,13 @@ class _ReelsScreenState extends State<ReelsScreen> {
         print('ReelsScreen: Error fetching user reels: $e');
       }
 
-      // 1.5. Fetch additional user reels from UserMediaService
+      // 1.5. User reels functionality removed
       try {
         final authProvider = Provider.of<AuthProvider>(context, listen: false);
         final currentUserId = authProvider.userProfile?.id;
         
-        if (currentUserId != null) {
-          final userMediaResponse = await UserMediaService.getUserMedia(userId: currentUserId);
-          if (userMediaResponse.success) {
-            additionalReels = userMediaResponse.reels.where((reel) =>  
-              reel.videoUrl != null && reel.videoUrl!.isNotEmpty
-            ).toList();
-            
-            // Check for duplicates before adding
-            for (final reel in additionalReels) {
-              final alreadyExists = allReels.any((existingReel) => 
-                existingReel.id == reel.id || existingReel.videoUrl == reel.videoUrl
-              );
-              if (!alreadyExists) {
-                allReels.add(reel);
-              }
-            }
-            
-            print('ReelsScreen: Found ${additionalReels.length} additional user reels from UserMediaService');
-          }
-        }
+        // User media service removed - no additional user reels
+        additionalReels = [];
       } catch (e) {
         print('ReelsScreen: Error fetching additional user reels: $e');
       }
@@ -175,20 +180,10 @@ class _ReelsScreenState extends State<ReelsScreen> {
             // Fetch reels from each followed user (limit to first 10 to avoid too many API calls)
             followedUserIds = followingData.take(10).map((following) => following['_id'] ?? following['id']).where((id) => id != null).cast<String>().toList();
             
-            // Fetch reels from all following users in parallel for better performance
+            // User media service removed - no reels from following users
             final futures = followedUserIds.map((followedUserId) async {
-              try {
-                final userMediaResponse = await UserMediaService.getUserMedia(userId: followedUserId);
-                if (userMediaResponse.success) {
-                  return userMediaResponse.reels.where((reel) => 
-                    reel.videoUrl != null && reel.videoUrl!.isNotEmpty
-                  ).toList();
-                }
-                return <Post>[];
-              } catch (e) {
-                print('ReelsScreen: Error fetching reels from followed user $followedUserId: $e');
-                return <Post>[];
-              }
+              // Media service removed - return empty list
+              return <Post>[]; // Empty list since media service is removed
             });
             
             // Wait for all API calls to complete
@@ -301,7 +296,17 @@ class _ReelsScreenState extends State<ReelsScreen> {
       for (final reel in sortedReels) {
         _likeStates[reel.id] = reel.isLiked;
         _likeCounts[reel.id] = reel.likes;
-        _followStates[reel.userId] = false; // Will be updated by checking follow status
+        
+        // Initialize follow state - for Baba Ji posts, check if we have initial data
+        if (reel.isBabaJiPost && reel.babaPageData?.isFollowing == true) {
+          _followStates[reel.userId] = true;
+          print('ReelsScreen: Initial state - Baba Ji page ${reel.userId} is being followed (from babaPageData)');
+        } else {
+          _followStates[reel.userId] = false; // Will be updated by checking follow status
+          if (reel.isBabaJiPost) {
+            print('ReelsScreen: Initial state - Setting follow state to false for Baba Ji page ${reel.userId} (will check server)');
+          }
+        }
       }
       
       setState(() {
@@ -311,6 +316,9 @@ class _ReelsScreenState extends State<ReelsScreen> {
       
       // Check follow status for all users
       _checkFollowStatuses();
+      
+      // Check like status for Baba Ji reels
+      _checkBabaJiReelLikeStatuses();
     } catch (e) {
       print('Error loading reels: $e');
       setState(() {
@@ -667,24 +675,6 @@ class _ReelsScreenState extends State<ReelsScreen> {
                         ],
                       ],
                     ),
-                    InkWell(
-                      onTap: () {
-                        print('Handle tapped for user: ${reel.userId}');
-                        _navigateToUserProfile(reel.userId, reel.username, reel.isBabaJiPost, babaPageData: reel.babaPageData);
-                      },
-                      borderRadius: BorderRadius.circular(4),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
-                        child: Text(
-                          reel.isBabaJiPost ? '@${reel.userId}' : '@${reel.username.toLowerCase().replaceAll(' ', '')}',
-                          style: TextStyle(
-                            color: Colors.grey[300],
-                            fontSize: 14,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ),
                   ],
                 ),
               ),
@@ -860,60 +850,96 @@ class _ReelsScreenState extends State<ReelsScreen> {
       
       print('ReelsScreen: Checking follow statuses for ${_reels.length} reels');
       
-      // Check follow status for each unique user
-      final uniqueUserIds = _reels.map((reel) => reel.userId).toSet();
-      print('ReelsScreen: Unique user IDs to check: ${uniqueUserIds.toList()}');
+      // Check follow status for each reel
+      print('ReelsScreen: Checking follow status for ${_reels.length} reels');
       
-      for (final userId in uniqueUserIds) {
-        if (userId != currentUserId) {
+      for (final reel in _reels) {
+        if (reel.userId != currentUserId) {
           try {
-            print('ReelsScreen: Checking follow status for user: $userId');
-            final followStatus = await ApiService.checkRGramFollowStatus(
-              targetUserId: userId,
-              token: token,
-            );
-            
-            print('ReelsScreen: Follow status response for $userId: $followStatus');
-            
-            if (followStatus['success'] == true && followStatus['data'] != null && mounted) {
-              final isFollowing = followStatus['data']['isFollowing'] ?? false;
-              print('ReelsScreen: User $userId follow status: $isFollowing');
+            // Check if this is a Baba Ji reel or regular user reel
+            if (reel.isBabaJiPost && reel.babaPageId != null) {
+              print('ReelsScreen: Checking Baba Ji follow status for page: ${reel.babaPageId}, userId: ${reel.userId}');
               
-              setState(() {
-                _followStates[userId] = isFollowing;
-              });
-            } else {
-              print('ReelsScreen: Follow status check failed for $userId: ${followStatus['message']}');
-              // Fallback: use AuthProvider method
               try {
-                final authFollowStatus = await authProvider.isFollowingUser(userId);
-                print('ReelsScreen: AuthProvider fallback for $userId: $authFollowStatus');
-                if (mounted) {
+                final followStatus = await BabaPageService.checkFollowStatus(
+                  pageId: reel.babaPageId!,
+                  userId: currentUserId,
+                  token: token,
+                );
+                
+                print('ReelsScreen: Baba Ji follow status response for ${reel.babaPageId}: $followStatus');
+                
+                if (followStatus['success'] == true && followStatus['data'] != null && mounted) {
+                  final isFollowing = followStatus['data']['isFollowing'] ?? false;
+                  print('ReelsScreen: User ${currentUserId} is following Baba Ji page ${reel.babaPageId}: $isFollowing');
+                  print('ReelsScreen: Setting _followStates[${reel.userId}] = $isFollowing');
+                  
                   setState(() {
-                    _followStates[userId] = authFollowStatus;
+                    _followStates[reel.userId] = isFollowing;
                   });
+                } else {
+                  print('ReelsScreen: Follow status check failed or returned null data: $followStatus');
                 }
-              } catch (fallbackError) {
-                print('ReelsScreen: AuthProvider fallback also failed for $userId: $fallbackError');
+              } catch (e) {
+                print('ReelsScreen: Error checking Baba Ji follow status for ${reel.babaPageId}: $e');
+              }
+            } else {
+              print('ReelsScreen: Checking follow status for user: ${reel.userId}');
+              final followStatus = await ApiService.checkRGramFollowStatus(
+                targetUserId: reel.userId,
+                token: token,
+              );
+              
+              print('ReelsScreen: Follow status response for ${reel.userId}: $followStatus');
+              
+              if (followStatus['success'] == true && followStatus['data'] != null && mounted) {
+                final isFollowing = followStatus['data']['isFollowing'] ?? false;
+                print('ReelsScreen: User ${reel.userId} follow status: $isFollowing');
+                
+                setState(() {
+                  _followStates[reel.userId] = isFollowing;
+                });
+              } else {
+                print('ReelsScreen: Follow status check failed for ${reel.userId}: ${followStatus['message']}');
+                // Only show error if it's not a "User not found" error (for users that might not exist anymore)
+                if (followStatus['message']?.toString().contains('User not found') == true) {
+                  print('ReelsScreen: User ${reel.userId} not found, skipping follow status check');
+                  // Don't set follow state for non-existent users
+                } else {
+                  // Fallback: use AuthProvider method
+                  try {
+                    final authFollowStatus = await authProvider.isFollowingUser(reel.userId);
+                    print('ReelsScreen: AuthProvider fallback for ${reel.userId}: $authFollowStatus');
+                    if (mounted) {
+                      setState(() {
+                        _followStates[reel.userId] = authFollowStatus;
+                      });
+                    }
+                  } catch (fallbackError) {
+                    print('ReelsScreen: AuthProvider fallback also failed for ${reel.userId}: $fallbackError');
+                  }
+                }
               }
             }
           } catch (e) {
-            print('ReelsScreen: Error checking follow status for user $userId: $e');
-            // Try fallback method
-            try {
-              final authFollowStatus = await authProvider.isFollowingUser(userId);
-              print('ReelsScreen: AuthProvider fallback for $userId after error: $authFollowStatus');
-              if (mounted) {
-                setState(() {
-                  _followStates[userId] = authFollowStatus;
-                });
+            print('ReelsScreen: Error checking follow status for ${reel.userId}: $e');
+            // Only try fallback for regular users, not for Baba Ji pages
+            if (!reel.isBabaJiPost) {
+              try {
+                final authFollowStatus = await authProvider.isFollowingUser(reel.userId);
+                print('ReelsScreen: AuthProvider fallback for ${reel.userId} after error: $authFollowStatus');
+                if (mounted) {
+                  setState(() {
+                    _followStates[reel.userId] = authFollowStatus;
+                  });
+                }
+              } catch (fallbackError) {
+                print('ReelsScreen: AuthProvider fallback also failed for ${reel.userId} after error: $fallbackError');
               }
-            } catch (fallbackError) {
-              print('ReelsScreen: AuthProvider fallback also failed for $userId after error: $fallbackError');
             }
           }
         } else {
-          print('ReelsScreen: Skipping follow status check for current user: $userId');
+          print('ReelsScreen: Skipping follow status check for current user: ${reel.userId}');
         }
       }
       
@@ -931,6 +957,48 @@ class _ReelsScreenState extends State<ReelsScreen> {
           _isCheckingFollowStatus = false;
         });
       }
+    }
+  }
+
+  Future<void> _checkBabaJiReelLikeStatuses() async {
+    try {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final currentUserId = authProvider.userProfile?.id;
+      
+      if (currentUserId == null) {
+        print('ReelsScreen: Cannot check like statuses - missing user ID');
+        return;
+      }
+      
+      print('ReelsScreen: Checking like statuses for Baba Ji reels');
+      
+      for (final reel in _reels) {
+        if (reel.isBabaJiPost && reel.babaPageId != null) {
+          try {
+            final response = await BabaLikeService.getBabaReelLikeStatus(
+              userId: currentUserId,
+              reelId: reel.id,
+              babaPageId: reel.babaPageId!,
+            );
+            
+            if (response != null && response['success'] == true && mounted) {
+              final isLiked = response['data']?['isLiked'] ?? false;
+              final likesCount = response['data']?['likesCount'] ?? 0;
+              
+              print('ReelsScreen: Baba Ji reel ${reel.id} - isLiked: $isLiked, likesCount: $likesCount');
+              
+              setState(() {
+                _likeStates[reel.id] = isLiked;
+                _likeCounts[reel.id] = likesCount;
+              });
+            }
+          } catch (e) {
+            print('ReelsScreen: Error checking like status for Baba Ji reel ${reel.id}: $e');
+          }
+        }
+      }
+    } catch (e) {
+      print('ReelsScreen: Error checking Baba Ji reel like statuses: $e');
     }
   }
 
@@ -952,7 +1020,7 @@ class _ReelsScreenState extends State<ReelsScreen> {
       }
       
       final isCurrentlyFollowing = _followStates[reel.userId] ?? false;
-      print('ReelsScreen: Toggling follow for user ${reel.username} (${reel.userId}) - Currently following: $isCurrentlyFollowing');
+      print('ReelsScreen: Toggling follow for ${reel.username} (${reel.userId}), isBabaJiPost: ${reel.isBabaJiPost}');
       
       // Optimistically update UI
       setState(() {
@@ -960,34 +1028,84 @@ class _ReelsScreenState extends State<ReelsScreen> {
       });
       
       Map<String, dynamic> result;
-      if (isCurrentlyFollowing) {
-        print('ReelsScreen: Unfollowing user ${reel.username}');
-        result = await ApiService.unfollowRGramUser(
-          targetUserId: reel.userId,
-          token: token,
-        );
+      
+      // Check if this is a Baba Ji reel or regular user reel
+      if (reel.isBabaJiPost && reel.babaPageId != null) {
+        // Handle Baba Ji page follow/unfollow
+        print('ReelsScreen: Handling Baba Ji follow/unfollow for page: ${reel.babaPageId}');
+        
+        if (isCurrentlyFollowing) {
+          print('ReelsScreen: Unfollowing Baba Ji page');
+          final followResponse = await BabaPageService.unfollowBabaPage(
+            pageId: reel.babaPageId!,
+            token: token,
+          );
+          result = {
+            'success': followResponse.success,
+            'message': followResponse.message,
+          };
+        } else {
+          print('ReelsScreen: Following Baba Ji page');
+          final followResponse = await BabaPageService.followBabaPage(
+            pageId: reel.babaPageId!,
+            token: token,
+          );
+          result = {
+            'success': followResponse.success,
+            'message': followResponse.message,
+          };
+        }
       } else {
-        print('ReelsScreen: Following user ${reel.username}');
-        result = await ApiService.followRGramUser(
-          targetUserId: reel.userId,
-          token: token,
-        );
+        // Handle regular user follow/unfollow
+        if (isCurrentlyFollowing) {
+          print('ReelsScreen: Unfollowing user ${reel.username}');
+          result = await ApiService.unfollowRGramUser(
+            targetUserId: reel.userId,
+            token: token,
+          );
+        } else {
+          print('ReelsScreen: Following user ${reel.username}');
+          result = await ApiService.followRGramUser(
+            targetUserId: reel.userId,
+            token: token,
+          );
+        }
       }
       
       print('ReelsScreen: Follow API result: $result');
       
       if (result['success'] != true && mounted) {
-        // Revert on failure
-        setState(() {
-          _followStates[reel.userId] = isCurrentlyFollowing;
-        });
+        // Check if the error is because already following/followed
+        final errorMessage = result['message'] ?? '';
+        final isAlreadyFollowing = errorMessage.toLowerCase().contains('already following') ||
+                                   errorMessage.toLowerCase().contains('already followed');
         
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result['message'] ?? 'Failed to update follow status'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        if (isAlreadyFollowing) {
+          // User is already following, update state to reflect this
+          setState(() {
+            _followStates[reel.userId] = true;
+          });
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Already following this page'),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        } else {
+          // Revert on failure
+          setState(() {
+            _followStates[reel.userId] = isCurrentlyFollowing;
+          });
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(errorMessage.isNotEmpty ? errorMessage : 'Failed to update follow status'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
       } else if (mounted) {
         // Show success message
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1045,34 +1163,58 @@ class _ReelsScreenState extends State<ReelsScreen> {
         _likeCounts[reel.id] = isCurrentlyLiked ? currentLikeCount - 1 : currentLikeCount + 1;
       });
       
-      Map<String, dynamic> result;
-      if (isCurrentlyLiked) {
-        result = await ApiService.unlikePost(
-          postId: reel.id,
-          token: token,
-          userId: currentUserId,
-        );
+      Map<String, dynamic>? result;
+      
+      // Check if this is a Baba Ji reel
+      if (reel.isBabaJiPost && reel.babaPageId != null) {
+        // Use Baba Ji like API for Baba Ji reels
+        print('ReelsScreen: Using Baba Ji like API for reel: ${reel.id}');
+        
+        if (isCurrentlyLiked) {
+          result = await BabaLikeService.unlikeBabaReel(
+            userId: currentUserId,
+            reelId: reel.id,
+            babaPageId: reel.babaPageId!,
+          );
+        } else {
+          result = await BabaLikeService.likeBabaReel(
+            userId: currentUserId,
+            reelId: reel.id,
+            babaPageId: reel.babaPageId!,
+          );
+        }
       } else {
-        result = await ApiService.likePost(
-          postId: reel.id,
-          token: token,
-          userId: currentUserId,
-        );
+        // Use regular like API for regular reels
+        if (isCurrentlyLiked) {
+          result = await ApiService.unlikePost(
+            postId: reel.id,
+            token: token,
+            userId: currentUserId,
+          );
+        } else {
+          result = await ApiService.likePost(
+            postId: reel.id,
+            token: token,
+            userId: currentUserId,
+          );
+        }
       }
       
-      if (result['success'] != true && mounted) {
+      if (result == null || result['success'] != true) {
         // Revert on failure
-        setState(() {
-          _likeStates[reel.id] = isCurrentlyLiked;
-          _likeCounts[reel.id] = currentLikeCount;
-        });
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(result['message'] ?? 'Failed to update like status'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        if (mounted) {
+          setState(() {
+            _likeStates[reel.id] = isCurrentlyLiked;
+            _likeCounts[reel.id] = currentLikeCount;
+          });
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result?['message'] ?? 'Failed to update like status'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
       }
     } catch (e) {
       print('Error toggling like: $e');

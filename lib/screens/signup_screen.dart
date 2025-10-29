@@ -304,7 +304,16 @@ class _SignupScreenState extends State<SignupScreen> {
                  fit: BoxFit.cover,
                ),
              ),
-             child: Column(
+             child: Stack(
+               children: [
+                 // Blur effect overlay
+                 BackdropFilter(
+                   filter: ImageFilter.blur(sigmaX: 3.0, sigmaY: 3.0),
+                   child: Container(
+                     color: Colors.transparent,
+                   ),
+                 ),
+                 Column(
                children: [
                  Expanded(
                    child: SafeArea(
@@ -1042,6 +1051,8 @@ class _SignupScreenState extends State<SignupScreen> {
                  
                  
                ],
+             ),
+                 ],
              ),
           ),
         );

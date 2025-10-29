@@ -273,16 +273,48 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             if (_lastMessageCount > 0 && activeMessages.length > _lastMessageCount) {
               _hasNewMessages = true;
             }
-            _lastMessageCount = activeMessages.length;
             
-            // Always update messages to ensure we have the latest (excluding deleted)
-            _messages = activeMessages;
-            print('ChatScreen: Loaded ${activeMessages.length} active messages from API (${messages.length - activeMessages.length} deleted)');
+            // Merge messages instead of replacing - preserve locally added messages
+            final existingMessageIds = _messages.map((m) => m.id).toSet();
+            final newServerMessages = activeMessages.where((m) => !existingMessageIds.contains(m.id)).toList();
+            
+            // Add new messages from server
+            _messages.addAll(newServerMessages);
+            
+            // Update existing messages with server data (in case server has updated fields)
+            for (final serverMessage in activeMessages) {
+              final index = _messages.indexWhere((m) => m.id == serverMessage.id);
+              if (index != -1) {
+                _messages[index] = serverMessage;
+              }
+            }
+            
+            // Sort messages by creation time to maintain chronological order
+            _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+            
+            // Remove duplicates based on ID
+            _messages = _messages.fold<List<Message>>([], (list, message) {
+              if (!list.any((m) => m.id == message.id)) {
+                list.add(message);
+              }
+              return list;
+            });
+            
+            // Re-sort after removing duplicates
+            _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+            
+            _lastMessageCount = _messages.length;
+            print('ChatScreen: Merged messages. Total: ${_messages.length} (${newServerMessages.length} new from server)');
             
             _isLoading = false;
           });
           _scrollToBottom();
           _lastRefreshTime = DateTime.now();
+          
+          // Cache all messages
+          if (_messages.isNotEmpty && _currentThreadId != null) {
+            await _cacheAllMessages();
+          }
           
           // Mark messages as read
           if (activeMessages.isNotEmpty) {
@@ -332,10 +364,43 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             final activeMessages = messages.where((m) => !m.isDeleted).toList();
             
             setState(() {
-              _messages = activeMessages;
+              // Merge messages instead of replacing
+              final existingMessageIds = _messages.map((m) => m.id).toSet();
+              final newServerMessages = activeMessages.where((m) => !existingMessageIds.contains(m.id)).toList();
+              
+              // Add new messages from server
+              _messages.addAll(newServerMessages);
+              
+              // Update existing messages with server data
+              for (final serverMessage in activeMessages) {
+                final index = _messages.indexWhere((m) => m.id == serverMessage.id);
+                if (index != -1) {
+                  _messages[index] = serverMessage;
+                }
+              }
+              
+              // Sort messages by creation time
+              _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+              
+              // Remove duplicates
+              _messages = _messages.fold<List<Message>>([], (list, message) {
+                if (!list.any((m) => m.id == message.id)) {
+                  list.add(message);
+                }
+                return list;
+              });
+              
+              // Re-sort after removing duplicates
+              _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+              
               _isLoading = false;
             });
             _scrollToBottom();
+            
+            // Cache all messages
+            if (_messages.isNotEmpty && _currentThreadId != null) {
+              await _cacheAllMessages();
+            }
             
             // Mark messages as read
             if (activeMessages.isNotEmpty) {
@@ -745,8 +810,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _sendMessage() async {
-    final message = _messageController.text.trim();
+  Future<void> _sendMessage([String? messageToSend]) async {
+    // Use provided message or get from controller
+    final message = messageToSend ?? _messageController.text.trim();
     if (message.isEmpty) return;
 
     setState(() {
@@ -773,6 +839,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         }
       }
       
+      print('ChatScreen: ========== Sending Message to Server ==========');
+      print('ChatScreen: Message: $message');
+      print('ChatScreen: To User: ${widget.recipientUserId}');
+      
       final response = await ChatService.sendMessage(
         toUserId: widget.recipientUserId,
         content: message,
@@ -781,13 +851,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         currentUserId: authProvider.userProfile!.id,
       );
 
+      print('ChatScreen: Send message response: $response');
+
       if (response['success'] == true && mounted) {
-        _messageController.clear();
+        // Only clear if this was from the input field (not retry)
+        if (messageToSend == null) {
+          _messageController.clear();
+        }
         
         // Get the thread ID from the response and update it immediately
         if (response['data']?['threadId'] != null) {
           final realThreadId = response['data']['threadId'];
-          if (_currentThreadId != realThreadId) {
+          if (_currentThreadId != realThreadId || _currentThreadId == null || _currentThreadId!.startsWith('temp_')) {
             _currentThreadId = realThreadId;
             print('ChatScreen: Updated thread ID to real ID: $_currentThreadId');
             
@@ -797,8 +872,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         }
         
         // Add the new message to the list immediately with proper data from API
+        final messageId = response['data']?['messageId'] ?? DateTime.now().millisecondsSinceEpoch.toString();
         final newMessage = Message(
-          id: response['data']?['messageId'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
+          id: messageId,
           threadId: _currentThreadId ?? '',
           sender: MessageSender(
             id: authProvider.userProfile!.id,
@@ -817,21 +893,40 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         );
         
         print('ChatScreen: Adding new message to local list: ${newMessage.content}');
+        print('ChatScreen: Message ID: ${newMessage.id}');
         print('ChatScreen: Using thread ID: $_currentThreadId');
-        setState(() {
-          _messages.add(newMessage);
-          _lastMessageCount = _messages.length;
-        });
         
-        print('ChatScreen: Total messages in list: ${_messages.length}');
+        // Check if message already exists (avoid duplicates)
+        final messageExists = _messages.any((m) => m.id == messageId);
+        
+        if (!messageExists) {
+          // Message doesn't exist, add it
+          setState(() {
+            _messages.add(newMessage);
+            // Sort messages by creation time to maintain order
+            _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+            _lastMessageCount = _messages.length;
+          });
+          
+          // Cache the message immediately
+          await _cacheMessage(newMessage);
+          
+          print('ChatScreen: Added new message. Total messages in list: ${_messages.length}');
+        } else {
+          print('ChatScreen: Message already exists in list, skipping duplicate');
+        }
+        
         _scrollToBottom();
         
         // Clear notification dot when user sends a message
         _clearNewMessageNotification();
         
-        // Real-time updates disabled to prevent constant refreshing
-        
-        // No need to reload messages - they are already added to the list
+        // Refresh messages after a short delay to ensure server has processed it
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted && _currentThreadId != null && !_currentThreadId!.startsWith('temp_')) {
+            _loadMessages();
+          }
+        });
         
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -843,15 +938,54 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       } else {
         if (mounted) {
           final errorMessage = response['message'] ?? 'Failed to send message';
-          print('ChatScreen: Message send failed: $errorMessage');
+          final statusCode = response['statusCode'];
+          print('ChatScreen: ❌ Message send failed: $errorMessage');
+          if (statusCode != null) {
+            print('ChatScreen: HTTP Status Code: $statusCode');
+          }
+          
+          // Show detailed error message to user
+          String userErrorMessage = errorMessage;
+          if (statusCode == 500) {
+            userErrorMessage = 'Server error. Please try again later.';
+          } else if (statusCode == 401) {
+            userErrorMessage = 'Authentication failed. Please login again.';
+          } else if (statusCode == 404) {
+            userErrorMessage = 'API endpoint not found. Please contact support.';
+          }
           
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(errorMessage),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Failed to send message',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    userErrorMessage,
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ],
+              ),
               backgroundColor: Colors.red,
-              duration: Duration(seconds: 4),
+              duration: Duration(seconds: 5),
+              action: SnackBarAction(
+                label: 'Retry',
+                textColor: Colors.white,
+                onPressed: () {
+                  // Retry sending the message
+                  _sendMessage(message);
+                },
+              ),
             ),
           );
+          
+          // Don't add message locally if server send failed
+          print('ChatScreen: Not adding message locally - server send failed');
         }
       }
     } catch (e) {
@@ -1257,6 +1391,126 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// Cache a single message to SharedPreferences
+  Future<void> _cacheMessage(Message message) async {
+    if (_currentThreadId == null || _currentThreadId!.isEmpty) return;
+    
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = 'messages_$_currentThreadId';
+      
+      // Get existing cached messages
+      final messagesJson = prefs.getString(key);
+      List<Message> cachedMessages = [];
+      
+      if (messagesJson != null) {
+        final List<dynamic> messagesData = jsonDecode(messagesJson);
+        for (final messageData in messagesData) {
+          try {
+            final sender = messageData['sender'] ?? {};
+            cachedMessages.add(Message(
+              id: messageData['id'] ?? '',
+              threadId: messageData['threadId'] ?? '',
+              sender: MessageSender(
+                id: sender['id'] ?? '',
+                username: sender['username'] ?? '',
+                fullName: sender['fullName'] ?? '',
+                avatar: sender['avatar'] ?? '',
+              ),
+              recipient: messageData['recipient'] ?? '',
+              content: messageData['content'] ?? '',
+              messageType: messageData['messageType'] ?? 'text',
+              mediaUrl: messageData['mediaUrl'],
+              mediaInfo: messageData['mediaInfo'],
+              isRead: messageData['isRead'] ?? false,
+              isDeleted: messageData['isDeleted'] ?? false,
+              reactions: messageData['reactions'] ?? [],
+              createdAt: DateTime.parse(messageData['createdAt']),
+              updatedAt: DateTime.parse(messageData['updatedAt']),
+            ));
+          } catch (e) {
+            print('ChatScreen: Error parsing cached message: $e');
+          }
+        }
+      }
+      
+      // Add or update the message
+      final existingIndex = cachedMessages.indexWhere((m) => m.id == message.id);
+      if (existingIndex != -1) {
+        cachedMessages[existingIndex] = message;
+      } else {
+        cachedMessages.add(message);
+      }
+      
+      // Sort by creation time
+      cachedMessages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      
+      // Convert to JSON and save
+      final List<Map<String, dynamic>> messagesData = cachedMessages.map((m) => {
+        'id': m.id,
+        'threadId': m.threadId,
+        'sender': {
+          'id': m.sender.id,
+          'username': m.sender.username,
+          'fullName': m.sender.fullName,
+          'avatar': m.sender.avatar,
+        },
+        'recipient': m.recipient,
+        'content': m.content,
+        'messageType': m.messageType,
+        'mediaUrl': m.mediaUrl,
+        'mediaInfo': m.mediaInfo,
+        'isRead': m.isRead,
+        'isDeleted': m.isDeleted,
+        'reactions': m.reactions,
+        'createdAt': m.createdAt.toIso8601String(),
+        'updatedAt': m.updatedAt.toIso8601String(),
+      }).toList();
+      
+      await prefs.setString(key, jsonEncode(messagesData));
+      print('ChatScreen: Cached message: ${message.id}');
+    } catch (e) {
+      print('ChatScreen: Error caching message: $e');
+    }
+  }
+
+  /// Cache all current messages to SharedPreferences
+  Future<void> _cacheAllMessages() async {
+    if (_currentThreadId == null || _currentThreadId!.isEmpty || _messages.isEmpty) return;
+    
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = 'messages_$_currentThreadId';
+      
+      // Convert messages to JSON
+      final List<Map<String, dynamic>> messagesData = _messages.map((m) => {
+        'id': m.id,
+        'threadId': m.threadId,
+        'sender': {
+          'id': m.sender.id,
+          'username': m.sender.username,
+          'fullName': m.sender.fullName,
+          'avatar': m.sender.avatar,
+        },
+        'recipient': m.recipient,
+        'content': m.content,
+        'messageType': m.messageType,
+        'mediaUrl': m.mediaUrl,
+        'mediaInfo': m.mediaInfo,
+        'isRead': m.isRead,
+        'isDeleted': m.isDeleted,
+        'reactions': m.reactions,
+        'createdAt': m.createdAt.toIso8601String(),
+        'updatedAt': m.updatedAt.toIso8601String(),
+      }).toList();
+      
+      await prefs.setString(key, jsonEncode(messagesData));
+      print('ChatScreen: Cached ${_messages.length} messages');
+    } catch (e) {
+      print('ChatScreen: Error caching all messages: $e');
+    }
+  }
+
 
 
 
@@ -1397,52 +1651,53 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                       ),
                                     ),
                                   ),
-                                  // Check if this is a baba page and show tag
-                                  if (_isBabaPage())
-                                    Container(
-                                      margin: const EdgeInsets.only(left: 6),
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: Colors.orange,
-                                        borderRadius: BorderRadius.circular(4),
-                                      ),
-                                      child: const Text(
-                                        'BABA JI',
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
+                                  // Hide BABA JI button and ID from chat
+                                  // if (_isBabaPage())
+                                  //   Container(
+                                  //     margin: const EdgeInsets.only(left: 6),
+                                  //     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  //     decoration: BoxDecoration(
+                                  //       color: Colors.orange,
+                                  //       borderRadius: BorderRadius.circular(4),
+                                  //     ),
+                                  //     child: const Text(
+                                  //       'BABA JI',
+                                  //       style: TextStyle(
+                                  //         color: Colors.white,
+                                  //         fontSize: 9,
+                                  //         fontWeight: FontWeight.bold,
+                                  //       ),
+                                  //     ),
+                                  //   ),
                                 ],
                               ),
-                              GestureDetector(
-                                onTap: _navigateToBabaProfile,
-                                child: Row(
-                                  children: [
-                                    Text(
-                                      'ID: ${widget.recipientUserId.length > 3 ? widget.recipientUserId.substring(0, 3) : widget.recipientUserId}...',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: Colors.black.withOpacity(0.6),
-                                        fontFamily: 'Poppins',
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              GestureDetector(
-                                onTap: _navigateToBabaProfile,
-                                child: Text(
-                                  '@${widget.recipientUserId}',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: Colors.black.withOpacity(0.6),
-                                    fontFamily: 'Poppins',
-                                  ),
-                                ),
-                              ),
+                              // Hide ID display from chat
+                              // GestureDetector(
+                              //   onTap: _navigateToBabaProfile,
+                              //   child: Row(
+                              //     children: [
+                              //       Text(
+                              //         'ID: ${widget.recipientUserId.length > 3 ? widget.recipientUserId.substring(0, 3) : widget.recipientUserId}...',
+                              //         style: TextStyle(
+                              //           fontSize: 11,
+                              //           color: Colors.black.withOpacity(0.6),
+                              //           fontFamily: 'Poppins',
+                              //         ),
+                              //       ),
+                              //     ],
+                              //   ),
+                              // ),
+                              // GestureDetector(
+                              //   onTap: _navigateToBabaProfile,
+                              //   child: Text(
+                              //     '@${widget.recipientUserId}',
+                              //     style: TextStyle(
+                              //       fontSize: 11,
+                              //       color: Colors.black.withOpacity(0.6),
+                              //       fontFamily: 'Poppins',
+                              //     ),
+                              //   ),
+                              // ),
                             ],
                           ),
                         ),

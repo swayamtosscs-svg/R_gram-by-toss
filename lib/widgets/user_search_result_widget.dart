@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/user_model.dart';
 import '../screens/user_profile_screen.dart';
-import '../services/user_media_service.dart';
 import '../providers/auth_provider.dart';
 
 class UserSearchResultWidget extends StatefulWidget {
@@ -56,14 +55,10 @@ class _UserSearchResultWidgetState extends State<UserSearchResultWidget> {
     });
 
     try {
-      // Fetch real post count from API
-      final realCount = await UserMediaService.getRealPostCount(
-        userId: widget.id,
-      );
-      
+      // Posts functionality removed - showing 0
       if (mounted) {
         setState(() {
-          _realPostsCount = realCount;
+          _realPostsCount = 0;
           _isLoadingRealCount = false;
         });
       }

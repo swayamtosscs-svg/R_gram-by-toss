@@ -27,6 +27,7 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
   String _mediaType = 'image';
   bool _isUploading = false;
   bool _isVideoInitialized = false;
+  bool _isCameraInUse = false; // Track if camera is currently active
   final ImagePicker _picker = ImagePicker();
   final TextEditingController _captionController = TextEditingController();
 
@@ -154,13 +155,37 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
   }
 
   Future<void> _takePhoto() async {
+    // Check if widget is still mounted before starting
+    if (!mounted) return;
+    
+    // Prevent multiple camera calls simultaneously
+    if (_isCameraInUse) {
+      print('StoryUploadScreen: Camera already in use');
+      return;
+    }
+    
     try {
+      setState(() {
+        _isCameraInUse = true;
+      });
+      
       print('StoryUploadScreen: Starting camera capture...');
       
       // Check camera permission first
       bool hasPermission = await _checkCameraPermission();
       if (!hasPermission) {
         print('StoryUploadScreen: Camera permission denied');
+        setState(() {
+          _isCameraInUse = false;
+        });
+        return;
+      }
+      
+      // Check if mounted after permission check
+      if (!mounted) {
+        setState(() {
+          _isCameraInUse = false;
+        });
         return;
       }
       
@@ -175,6 +200,20 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
         preferredCameraDevice: CameraDevice.rear, // Use rear camera by default
       );
 
+      // Check if widget is still mounted after camera returns
+      if (!mounted) {
+        print('StoryUploadScreen: Widget unmounted, ignoring camera result');
+        setState(() {
+          _isCameraInUse = false;
+        });
+        return;
+      }
+      
+      // Reset camera in use flag
+      setState(() {
+        _isCameraInUse = false;
+      });
+
       print('StoryUploadScreen: Camera capture result: ${photo?.path}');
 
       if (photo != null) {
@@ -182,6 +221,16 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
         
         // Validate the captured photo
         try {
+          // Verify file exists and is accessible
+          if (!kIsWeb) {
+            final tempFile = File(photo.path);
+            if (!await tempFile.exists()) {
+              print('StoryUploadScreen: Captured photo file does not exist');
+              _showErrorSnackBar('Photo file not found. Please try again.');
+              return;
+            }
+          }
+          
           final fileSize = await photo.length();
           if (fileSize == 0) {
             print('StoryUploadScreen: Captured photo is empty');
@@ -191,30 +240,42 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
           
           print('StoryUploadScreen: Photo size: $fileSize bytes');
           
+          // Check if still mounted before setState
+          if (!mounted) return;
+          
           setState(() {
             if (kIsWeb) {
               // On web, use the photo object directly
               _selectedMedia = photo;
             } else {
               // On mobile, convert to File
+              // Ensure we copy to a permanent location if needed
               _selectedMedia = File(photo.path);
             }
             _mediaType = 'image';
           });
           
           // Show success message
-          _showSuccessSnackBar('Photo captured successfully!');
+          if (mounted) {
+            _showSuccessSnackBar('Photo captured successfully!');
+          }
         } catch (validationError) {
           print('StoryUploadScreen: Error validating captured photo: $validationError');
-          _showErrorSnackBar('Photo validation failed. Please try again.');
+          if (mounted) {
+            _showErrorSnackBar('Photo validation failed. Please try again.');
+          }
         }
       } else {
         print('StoryUploadScreen: No photo captured (user cancelled)');
         // Don't show error message for user cancellation
-        // _showErrorSnackBar('No photo captured. Please try again.');
+        // Don't navigate away - stay on the screen
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       print('StoryUploadScreen: Error taking photo: $e');
+      print('StoryUploadScreen: Stack trace: $stackTrace');
+      
+      // Check if still mounted before showing error
+      if (!mounted) return;
       
       // Provide more specific error messages
       String errorMessage = 'Error taking photo: $e';
@@ -231,6 +292,13 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
       }
       
       _showErrorSnackBar(errorMessage);
+    } finally {
+      // Ensure flag is reset even if there's an error
+      if (mounted) {
+        setState(() {
+          _isCameraInUse = false;
+        });
+      }
     }
   }
 
@@ -430,7 +498,14 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      canPop: !_isCameraInUse, // Prevent popping while camera is in use
+      onPopInvoked: (bool didPop) {
+        if (didPop) {
+          print('StoryUploadScreen: Back button pressed while camera in use: $_isCameraInUse');
+        }
+      },
+      child: Scaffold(
       appBar: AppBar(
         title: const Text('Upload Story'),
         backgroundColor: Colors.black87,
@@ -481,6 +556,7 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
                                   width: double.infinity,
                                   height: double.infinity,
                                   errorBuilder: (context, error, stackTrace) {
+                                    print('StoryUploadScreen: Error loading image from network: $error');
                                     return Container(
                                       color: Colors.grey[800],
                                       child: const Icon(
@@ -491,11 +567,83 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
                                     );
                                   },
                                 )
-                              : Image.file(
-                                  _selectedMedia!,
-                                  fit: BoxFit.cover,
-                                  width: double.infinity,
-                                  height: double.infinity,
+                              : FutureBuilder<bool>(
+                                  future: _selectedMedia is File 
+                                      ? (_selectedMedia as File).exists()
+                                      : Future.value(true),
+                                  builder: (context, snapshot) {
+                                    if (snapshot.connectionState == ConnectionState.waiting) {
+                                      return const Center(
+                                        child: CircularProgressIndicator(),
+                                      );
+                                    }
+                                    
+                                    if (snapshot.hasData && snapshot.data == true) {
+                                      return Image.file(
+                                        _selectedMedia as File,
+                                        fit: BoxFit.cover,
+                                        width: double.infinity,
+                                        height: double.infinity,
+                                        errorBuilder: (context, error, stackTrace) {
+                                          print('StoryUploadScreen: Error loading image file: $error');
+                                          print('StoryUploadScreen: File path: ${(_selectedMedia as File).path}');
+                                          return Container(
+                                            color: Colors.grey[800],
+                                            child: Column(
+                                              mainAxisAlignment: MainAxisAlignment.center,
+                                              children: [
+                                                const Icon(
+                                                  Icons.error_outline,
+                                                  color: Colors.white,
+                                                  size: 50,
+                                                ),
+                                                const SizedBox(height: 8),
+                                                const Text(
+                                                  'Error loading image',
+                                                  style: TextStyle(color: Colors.white),
+                                                ),
+                                                const SizedBox(height: 8),
+                                                ElevatedButton(
+                                                  onPressed: () {
+                                                    // Retry by selecting image again
+                                                    _pickImage();
+                                                  },
+                                                  child: const Text('Select Again'),
+                                                ),
+                                              ],
+                                            ),
+                                          );
+                                        },
+                                      );
+                                    } else {
+                                      return Container(
+                                        color: Colors.grey[800],
+                                        child: Column(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            const Icon(
+                                              Icons.error_outline,
+                                              color: Colors.white,
+                                              size: 50,
+                                            ),
+                                            const SizedBox(height: 8),
+                                            const Text(
+                                              'Image file not found',
+                                              style: TextStyle(color: Colors.white),
+                                            ),
+                                            const SizedBox(height: 8),
+                                            ElevatedButton(
+                                              onPressed: () {
+                                                // Retry by taking photo again
+                                                _takePhoto();
+                                              },
+                                              child: const Text('Retry Capture'),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    }
+                                  },
                                 )
                           : _isVideoInitialized
                               ? Stack(
@@ -653,6 +801,7 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
             ),
           ),
         ],
+      ),
       ),
     );
   }

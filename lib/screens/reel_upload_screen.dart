@@ -4,10 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import '../widgets/video_player_widget.dart';
 import 'package:provider/provider.dart';
-import '../services/reel_service.dart';
+import '../services/reels_management_service.dart';
 import '../services/media_upload_service.dart';
 import '../services/local_storage_service.dart';
-import '../services/user_media_service.dart';
 import '../models/reel_model.dart';
 import '../models/post_model.dart';
 import '../providers/auth_provider.dart';
@@ -134,25 +133,22 @@ class _ReelUploadScreenState extends State<ReelUploadScreen> {
   Future<void> _uploadReel() async {
     if (!_formKey.currentState!.validate()) return;
 
+    if (_selectedVideo == null) {
+      _showErrorSnackBar('Please select a video first');
+      return;
+    }
+
     setState(() {
       _isLoading = true;
       _uploadResult = null;
     });
 
     try {
-      if (_selectedVideo == null) {
-        _showErrorSnackBar('Please select a video first');
-        setState(() {
-          _isLoading = false;
-        });
-        return;
-      }
-
-      // Get current user ID from AuthProvider
+      // Get token from AuthProvider
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
-      final currentUserId = authProvider.userProfile?.id;
+      final token = authProvider.authToken;
       
-      if (currentUserId == null) {
+      if (token == null) {
         _showErrorSnackBar('User not authenticated');
         setState(() {
           _isLoading = false;
@@ -160,122 +156,75 @@ class _ReelUploadScreenState extends State<ReelUploadScreen> {
         return;
       }
 
-      // First upload video to local storage with userId
-      print('Starting video upload to local storage...');
-      final mediaUploadResult = await MediaUploadService.uploadVideo(
-        _selectedVideo!,
-        currentUserId,
-        title: _contentController.text.trim().isNotEmpty 
-            ? _contentController.text.trim() 
-            : 'Reel Upload',
-      );
-      print('Local storage upload result: ${mediaUploadResult.success} - ${mediaUploadResult.message}');
+      File? videoFile;
       
-      if (mediaUploadResult.success && mediaUploadResult.data != null) {
-        print('Video uploaded successfully to local storage: ${mediaUploadResult.data!.secureUrl}');
-        
-        // Video uploaded successfully, now create reel
-        final token = authProvider.authToken;
-        
-        if (token == null) {
-          _showErrorSnackBar('Authentication token not found');
-          setState(() {
-            _isLoading = false;
-          });
-          return;
+      // Convert XFile to File if needed
+      if (_selectedVideo != null) {
+        if (_selectedVideo is File) {
+          videoFile = _selectedVideo as File;
+        } else if (_selectedVideo is XFile) {
+          videoFile = File((_selectedVideo as XFile).path);
         }
-        
-        print('Creating reel with token: ${token.substring(0, 20)}...');
-        final response = await ReelService.uploadReel(
-          content: _contentController.text,
-          videoUrl: mediaUploadResult.data!.secureUrl,
-          thumbnail: _thumbnailController.text.isNotEmpty 
-            ? _thumbnailController.text 
-            : mediaUploadResult.data!.secureUrl, // Use video URL as thumbnail if none provided
-          token: token,
-        );
+      }
 
-        print('Reel service response: ${response.success} - ${response.message}');
-
-        if (response.success) {
-          // Save the reel locally so it shows up in the profile
-          final localReel = Post(
-            id: 'local_reel_${DateTime.now().millisecondsSinceEpoch}',
-            userId: 'current_user',
-            username: 'You',
-            userAvatar: 'https://via.placeholder.com/50/6366F1/FFFFFF?text=U',
-            caption: _contentController.text.trim(),
-            videoUrl: mediaUploadResult.data!.secureUrl,
-            type: PostType.reel,
-            createdAt: DateTime.now(),
-            hashtags: [],
-          );
-          
-          print('Saving reel locally...');
-          await LocalStorageService.saveReel(localReel);
-          print('Reel saved locally successfully');
-          
-          setState(() {
-            _uploadResult = '✅ Reel uploaded successfully!\n\nVideo uploaded to local storage\nReel created and saved locally\nYou can now see it in your profile!';
-            _isLoading = false;
-          });
-
-          // Clear form on success
-          _contentController.clear();
-          _thumbnailController.clear();
-          setState(() {
-            _selectedVideo = null;
-            _isVideoInitialized = false;
-          });
-          
-          // Show success message
-          _showSuccessSnackBar('Reel uploaded successfully! Check your profile.');
-          
-          // Notify that media has been updated for this user
-          final authProvider = Provider.of<AuthProvider>(context, listen: false);
-          final currentUserId = authProvider.userProfile?.id;
-          if (currentUserId != null) {
-            UserMediaService.notifyMediaUpdated(currentUserId);
-            // Also clear any cached data
-            UserMediaService.clearUserCache(currentUserId);
-          }
-          
-        } else {
-          // Even if reel service fails, we still have the video uploaded
-          // Save it locally so it appears in the profile
-          final localReel = Post(
-            id: 'local_reel_${DateTime.now().millisecondsSinceEpoch}',
-            userId: 'current_user',
-            username: 'You',
-            userAvatar: 'https://via.placeholder.com/50/6366F1/FFFFFF?text=U',
-            caption: _contentController.text.trim(),
-            videoUrl: mediaUploadResult.data!.secureUrl,
-            type: PostType.reel,
-            createdAt: DateTime.now(),
-            hashtags: [],
-          );
-          
-          await LocalStorageService.saveReel(localReel);
-          
-          setState(() {
-            _uploadResult = '⚠️ Video uploaded to local storage but reel service failed\n\nVideo is saved locally and will appear in your profile\nError: ${response.message}';
-            _isLoading = false;
-          });
-          
-          _showSuccessSnackBar('Video uploaded! Check your profile for the reel.');
-        }
-      } else {
-        _showErrorSnackBar('Video upload failed: ${mediaUploadResult.message}');
+      if (videoFile == null) {
+        _showErrorSnackBar('Invalid video file');
         setState(() {
           _isLoading = false;
+        });
+        return;
+      }
+
+      // Upload reel using Reels Management API
+      final response = await ReelsManagementService.uploadReel(
+        token: token,
+        video: videoFile,
+        caption: _contentController.text.trim(),
+        isPublic: true,
+      );
+
+      if (!mounted) return;
+
+      if (response.success) {
+        _showSuccessSnackBar(response.message);
+        setState(() {
+          _uploadResult = '✅ ${response.message}';
+        });
+        
+        // Clear form
+        _contentController.clear();
+        _thumbnailController.clear();
+        setState(() {
+          _selectedVideo = null;
+          _isVideoInitialized = false;
+        });
+        
+        // Wait a moment to show success message, then navigate back
+        await Future.delayed(const Duration(seconds: 1));
+        
+        if (mounted) {
+          Navigator.of(context).pop(true); // Return true to indicate success
+        }
+      } else {
+        _showErrorSnackBar(response.message);
+        setState(() {
+          _uploadResult = '❌ ${response.message}';
         });
       }
     } catch (e) {
       print('Error in _uploadReel: $e');
-      setState(() {
-        _uploadResult = '❌ Error: $e';
-        _isLoading = false;
-      });
+      if (mounted) {
+        _showErrorSnackBar('Error uploading reel: $e');
+        setState(() {
+          _uploadResult = '❌ Error: $e';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 

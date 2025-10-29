@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 import 'dart:ui';
+import 'dart:async';
 import '../providers/auth_provider.dart';
 import 'story_upload_screen.dart';
 import 'post_upload_screen.dart';
@@ -111,26 +113,26 @@ class AddOptionsScreen extends StatelessWidget {
                         
                         SizedBox(height: isSmallScreen ? 8 : 12),
                         
-                        // Add Post Option
+                        // Upload Post Option
                         _buildOptionCard(
                           context,
-                          icon: Icons.grid_on,
-                          title: 'Add Post',
-                          subtitle: 'Share an image or thought with your community',
-                          color: const Color(0xFF10B981),
+                          icon: Icons.image,
+                          title: 'Upload Post',
+                          subtitle: 'Share an image or video post',
+                          color: const Color(0xFF3B82F6),
                           onTap: () => _navigateToPostUpload(context),
                           isCompact: isSmallScreen,
                         ),
                         
                         SizedBox(height: isSmallScreen ? 8 : 12),
                         
-                        // Add Reel Option
+                        // Upload Reel Option
                         _buildOptionCard(
                           context,
-                          icon: Icons.play_circle_outline,
-                          title: 'Add Reel',
-                          subtitle: 'Create a short video to inspire others',
-                          color: const Color(0xFFF59E0B),
+                          icon: Icons.videocam,
+                          title: 'Upload Reel',
+                          subtitle: 'Share a short video reel',
+                          color: const Color(0xFF10B981),
                           onTap: () => _navigateToReelUpload(context),
                           isCompact: isSmallScreen,
                         ),
@@ -279,27 +281,80 @@ class AddOptionsScreen extends StatelessWidget {
             token: authProvider.authToken!,
           ),
         ),
-      );
+      ).then((success) {
+        if (success == true && context.mounted) {
+          // Post uploaded successfully - navigate to profile
+          // Use SchedulerBinding to ensure navigation happens after frame
+          SchedulerBinding.instance.addPostFrameCallback((_) {
+            Future.delayed(const Duration(milliseconds: 400), () {
+              if (!context.mounted) return;
+              try {
+                Navigator.pushNamedAndRemoveUntil(
+                  context,
+                  '/profile',
+                  (route) => false,
+                );
+              } catch (e) {
+                print('Navigation error, retrying: $e');
+                // Retry with a longer delay
+                Future.delayed(const Duration(milliseconds: 500), () {
+                  if (context.mounted) {
+                    Navigator.pushNamedAndRemoveUntil(
+                      context,
+                      '/profile',
+                      (route) => false,
+                    );
+                  }
+                });
+              }
+            });
+          });
+        }
+      });
     } else {
-      _showErrorSnackBar(context, 'Please login to create posts');
+      _showErrorSnackBar(context, 'Please login to upload posts');
     }
   }
 
   void _navigateToReelUpload(BuildContext context) {
-    print('AddOptionsScreen: Navigating to reel upload');
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     if (authProvider.authToken != null) {
-      print('AddOptionsScreen: Auth token exists, navigating...');
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) => const ReelUploadScreen(),
         ),
-      ).then((_) {
-        print('AddOptionsScreen: Returned from reel upload screen');
+      ).then((success) {
+        if (success == true && context.mounted) {
+          // Reel uploaded successfully - navigate to profile
+          // Use SchedulerBinding to ensure navigation happens after frame
+          SchedulerBinding.instance.addPostFrameCallback((_) {
+            Future.delayed(const Duration(milliseconds: 400), () {
+              if (!context.mounted) return;
+              try {
+                Navigator.pushNamedAndRemoveUntil(
+                  context,
+                  '/profile',
+                  (route) => false,
+                );
+              } catch (e) {
+                print('Navigation error, retrying: $e');
+                // Retry with a longer delay
+                Future.delayed(const Duration(milliseconds: 500), () {
+                  if (context.mounted) {
+                    Navigator.pushNamedAndRemoveUntil(
+                      context,
+                      '/profile',
+                      (route) => false,
+                    );
+                  }
+                });
+              }
+            });
+          });
+        }
       });
     } else {
-      print('AddOptionsScreen: No auth token, showing error');
       _showErrorSnackBar(context, 'Please login to upload reels');
     }
   }

@@ -1096,91 +1096,103 @@ class _BabaPagesScreenState extends State<BabaPagesScreen> {
                   ),
 
                   // Right side buttons (Follow + Menu) - Compact layout
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Follow Button (gradient + compact, avoids overflow)
-                      Container(
-                        constraints: const BoxConstraints(maxWidth: 80), // Constrain width
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            gradient: babaPage.isFollowing 
-                              ? const LinearGradient(
-                                  colors: [Color(0xFF4CAF50), Color(0xFF45A049)], // Green gradient for following
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                )
-                              : const LinearGradient(
-                                  colors: [Color(0xFFC2D6D6), Color(0xFFBDD5D3)], // Original gradient for follow
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
+                  Builder(
+                    builder: (context) {
+                      // Check if current user is the creator of this page
+                      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+                      final currentUserId = authProvider.userProfile?.id;
+                      final isCreator = currentUserId != null && currentUserId == babaPage.creatorId;
+                      
+                      return Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Follow Button (gradient + compact, avoids overflow)
+                          Container(
+                            constraints: const BoxConstraints(maxWidth: 80), // Constrain width
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                gradient: babaPage.isFollowing 
+                                  ? const LinearGradient(
+                                      colors: [Color(0xFF4CAF50), Color(0xFF45A049)], // Green gradient for following
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                    )
+                                  : const LinearGradient(
+                                      colors: [Color(0xFFC2D6D6), Color(0xFFBDD5D3)], // Original gradient for follow
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                    ),
+                                borderRadius: BorderRadius.circular(16),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.1),
+                                    blurRadius: 4,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: GestureDetector(
+                                onTap: () => _handleFollowBabaPage(babaPage),
+                                child: Text(
+                                  babaPage.isFollowing ? 'Following' : 'Follow',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 10, // Reduced font size
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                  textAlign: TextAlign.center,
                                 ),
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.1),
-                                blurRadius: 4,
-                                offset: const Offset(0, 2),
                               ),
-                            ],
-                          ),
-                          child: GestureDetector(
-                            onTap: () => _handleFollowBabaPage(babaPage),
-                            child: Text(
-                              babaPage.isFollowing ? 'Following' : 'Follow',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 10, // Reduced font size
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                              maxLines: 1,
-                              textAlign: TextAlign.center,
                             ),
                           ),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      // 3-dot menu button
-                      PopupMenuButton<String>(
-                        onSelected: (value) {
-                          if (value == 'delete') {
-                            _showDeleteConfirmation(babaPage);
-                          }
-                        },
-                        itemBuilder: (BuildContext context) => [
-                          const PopupMenuItem<String>(
-                            value: 'delete',
-                            child: Row(
-                              children: [
-                                Icon(Icons.delete, color: Colors.red),
-                                SizedBox(width: 8),
-                                Text(
-                                  'Delete Page',
-                                  style: TextStyle(
-                                    color: Colors.red,
-                                    fontFamily: 'Poppins',
+                          // Only show delete menu if user is the creator
+                          if (isCreator) ...[
+                            const SizedBox(height: 6),
+                            // 3-dot menu button - only shows for creator
+                            PopupMenuButton<String>(
+                              onSelected: (value) {
+                                if (value == 'delete') {
+                                  _showDeleteConfirmation(babaPage);
+                                }
+                              },
+                              itemBuilder: (BuildContext context) => [
+                                const PopupMenuItem<String>(
+                                  value: 'delete',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.delete, color: Colors.red),
+                                      SizedBox(width: 8),
+                                      Text(
+                                        'Delete Page',
+                                        style: TextStyle(
+                                          color: Colors.red,
+                                          fontFamily: 'Poppins',
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
+                              child: Container(
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                child: const Icon(
+                                  Icons.more_vert,
+                                  color: Colors.grey,
+                                  size: 16, // Reduced icon size
+                                ),
+                              ),
                             ),
-                          ),
+                          ],
                         ],
-                        child: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: Colors.grey.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                          child: const Icon(
-                            Icons.more_vert,
-                            color: Colors.grey,
-                            size: 16, // Reduced icon size
-                          ),
-                        ),
-                      ),
-                    ],
+                      );
+                    },
                   ),
                 ],
               ),

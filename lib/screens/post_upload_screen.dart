@@ -5,9 +5,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../services/media_upload_service.dart';
-import '../services/post_service.dart';
+import '../services/posts_management_service.dart';
 import '../services/local_storage_service.dart';
-import '../services/user_media_service.dart';
 import '../models/post_model.dart';
 
 class PostUploadScreen extends StatefulWidget {
@@ -79,92 +78,65 @@ class _PostUploadScreenState extends State<PostUploadScreen> {
   }
 
   Future<void> _uploadPost() async {
-    if (_selectedImage == null) {
-      _showErrorSnackBar('Please select an image first');
+    if (!mounted) return;
+    
+    // Get token from AuthProvider
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final token = authProvider.authToken;
+    
+    if (token == null) {
+      _showErrorSnackBar('User not authenticated');
       return;
     }
 
-    if (!mounted) return;
-    
+    // Check if at least caption or media is provided
+    final caption = _captionController.text.trim();
+    if (_selectedImage == null && caption.isEmpty) {
+      _showErrorSnackBar('Please add a caption or select media');
+      return;
+    }
+
     setState(() {
       _isUploading = true;
     });
 
     try {
-      // Check if widget is still mounted
-      if (!mounted) return;
+      File? mediaFile;
       
-      // Get current user ID from AuthProvider
-      final authProvider = Provider.of<AuthProvider>(context, listen: false);
-      final currentUserId = authProvider.userProfile?.id;
-      
-      if (currentUserId == null) {
-        if (!mounted) return;
-        _showErrorSnackBar('User not authenticated');
-        return;
+      // Convert XFile to File if needed
+      if (_selectedImage != null) {
+        if (_selectedImage is File) {
+          mediaFile = _selectedImage as File;
+        } else if (_selectedImage is XFile) {
+          mediaFile = File((_selectedImage as XFile).path);
+        }
       }
 
-      // Upload media to local storage with userId
-      final uploadResponse = await MediaUploadService.uploadImage(
-        _selectedImage!,
-        currentUserId,
-        title: _captionController.text.trim().isNotEmpty 
-            ? _captionController.text.trim() 
-            : 'Post Upload',
+      // Upload post using Posts Management API (supports text-only posts)
+      final response = await PostsManagementService.uploadPost(
+        token: token,
+        media: mediaFile, // Can be null for text-only posts
+        caption: caption.isEmpty ? null : caption,
+        isPublic: true,
       );
-      
-      if (uploadResponse.success && uploadResponse.data != null) {
-        // Now create the post with the uploaded media
-        final postResponse = await PostService.createPost(
-          caption: _captionController.text.trim(),
-          mediaUrl: uploadResponse.data!.secureUrl,
-          type: PostType.image,
-          token: widget.token,
-          hashtags: _extractHashtags(_captionController.text),
-        );
+
+      if (!mounted) return;
+
+      if (response.success) {
+        _showSuccessSnackBar(response.message);
         
-        if (postResponse.success) {
-          // Check if widget is still mounted before proceeding
-          if (!mounted) return;
-          
-          // Save the post locally so it shows up in the profile
-          if (postResponse.post != null) {
-            await LocalStorageService.savePost(postResponse.post!);
-          } else {
-            // Create a post object if the API didn't return one
-            final localPost = Post(
-              id: 'local_${DateTime.now().millisecondsSinceEpoch}',
-              userId: 'current_user',
-              username: 'You',
-              userAvatar: 'https://via.placeholder.com/50/6366F1/FFFFFF?text=U',
-              caption: _captionController.text.trim(),
-              imageUrl: uploadResponse.data!.secureUrl,
-              type: PostType.image,
-              createdAt: DateTime.now(),
-              hashtags: _extractHashtags(_captionController.text),
-            );
-            await LocalStorageService.savePost(localPost);
-          }
-          
-          // Check again after async operations
-          if (!mounted) return;
-          
-          _showSuccessSnackBar('Post created successfully!');
-          
-          // Notify that media has been updated for this user
-          UserMediaService.notifyMediaUpdated(currentUserId);
-          // Also clear any cached data
-          UserMediaService.clearUserCache(currentUserId);
-          
-          // Navigate back
-          Navigator.pop(context);
-        } else {
-          if (!mounted) return;
-          _showErrorSnackBar('Failed to create post: ${postResponse.message}');
+        // Clear form
+        _captionController.clear();
+        setState(() {
+          _selectedImage = null;
+        });
+        
+        // Navigate back and refresh profile
+        if (mounted) {
+          Navigator.of(context).pop(true); // Return true to indicate success
         }
       } else {
-        if (!mounted) return;
-        _showErrorSnackBar(uploadResponse.message ?? 'Media upload failed');
+        _showErrorSnackBar(response.message);
       }
     } catch (e) {
       if (!mounted) return;
@@ -228,7 +200,9 @@ class _PostUploadScreenState extends State<PostUploadScreen> {
         centerTitle: true,
         actions: [
           TextButton(
-            onPressed: _selectedImage != null && !_isUploading ? _uploadPost : null,
+            onPressed: ((_selectedImage != null || _captionController.text.trim().isNotEmpty) && !_isUploading) 
+                ? _uploadPost 
+                : null,
             child: _isUploading
                 ? const SizedBox(
                     width: 20,

@@ -40,6 +40,7 @@ import 'screens/baba_profile_ui_demo.dart';
 import 'screens/baba_pages_screen.dart';
 import 'screens/discover_users_screen.dart';
 import 'widgets/global_navigation_wrapper.dart';
+import 'profile_ui.dart';
 
 // import 'services/custom_http_client.dart';
 // import 'services/memory_optimization_service.dart';
@@ -222,6 +223,10 @@ class DivineConnectApp extends StatelessWidget {
               '/baba-pages': (context) => const GlobalNavigationWrapper(
                 child: BabaPagesScreen(),
                 initialIndex: 3,
+              ),
+              '/profile': (context) => const GlobalNavigationWrapper(
+                child: ProfileUI(),
+                initialIndex: 5,
               ),
             },
           );

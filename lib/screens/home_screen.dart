@@ -37,7 +37,6 @@ import '../services/story_service.dart';
 import '../services/feed_service.dart';
 import '../services/realtime_feed_service.dart';
 import '../services/chat_service.dart';
-import '../services/user_media_service.dart';
 import '../models/chat_thread_model.dart';
 import '../screens/profile_screen.dart'; // Added import for ProfileScreen
 import '../screens/baba_pages_screen.dart'; // Added import for BabaPagesScreen
@@ -75,6 +74,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
   Map<String, List<Story>> _groupedStories = {}; // Grouped stories by user
   List<String> _followedUserIds = []; // Store followed user IDs for story filtering
   bool _isFollowingBabaJi = false; // Cache Baba Ji follow status
+  List<String> _babaPageIds = []; // Store Babaji page IDs for story detection
   List<Post> _posts = []; // Cache posts to avoid regeneration
   bool _isLoading = false; // Single unified loading state for both stories and posts
   bool _isRefreshing = false; // Single loading state for refresh operations
@@ -541,7 +541,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
           token: authProvider.authToken!,
           currentUserId: authProvider.userProfile!.id,
           page: 1,
-          limit: 10, // Load more posts to show content from all followed users
+          limit: 9999, // Unlimited - load all posts
         );
         
         print('HomeScreen: Received ${posts.length} posts from FeedService');
@@ -581,7 +581,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
           token: authProvider.authToken!,
           currentUserId: authProvider.userProfile!.id,
           page: 1,
-          limit: 10, // Load more posts to show content from all followed users
+          limit: 9999, // Unlimited - load all posts
         );
         
         if (mounted) {
@@ -664,7 +664,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
           token: authProvider.authToken!,
           currentUserId: authProvider.userProfile!.id,
           page: nextPage,
-          limit: 5, // Load more posts at once
+          limit: 9999, // Unlimited - load all posts
         );
 
         if (mounted) {
@@ -808,7 +808,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
               authProvider.userProfile!.id,
               token: authProvider.authToken,
               page: 1,
-              limit: 10, // Increased limit to show more user stories
+              limit: 9999, // Unlimited - load all stories
             ));
           }
           
@@ -949,7 +949,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
           userId, // userId is already a String
           token: token,
           page: 1,
-          limit: 10, // Increased limit to show more stories per user
+          limit: 9999, // Unlimited - load all stories
         ));
       }
       
@@ -985,7 +985,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
       final babajiStories = await BabaPageStoryService.getAllBabajiStoriesAsStories(
         token: token,
         page: 1,
-        limit: 10, // Increased limit to show more Baba Ji stories
+        limit: 9999, // Unlimited - load all Baba Ji stories
       );
       
       print('Loaded ${babajiStories.length} Baba Ji stories');
@@ -1581,6 +1581,10 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
       final babaPagesResponse = await BabaPageService.getBabaPages(token: token, page: 1, limit: 50);
       
       if (babaPagesResponse.success && babaPagesResponse.pages.isNotEmpty) {
+        // Store all Babaji page IDs for story detection
+        _babaPageIds = babaPagesResponse.pages.map((page) => page.id).toList();
+        print('HomeScreen: Cached ${_babaPageIds.length} Babaji page IDs: $_babaPageIds');
+        
         // Find the main Baba Ji page (assuming it's the first one or has a specific identifier)
         // For now, we'll check if any Baba page is being followed
         for (final babaPage in babaPagesResponse.pages) {
@@ -2126,7 +2130,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                   children: [
                     // Display real post count
                     FutureBuilder<int>(
-                      future: userId.isNotEmpty ? UserMediaService.getRealPostCount(userId: userId) : Future.value(postsCount),
+                      future: Future.value(0), // Posts functionality removed
                       builder: (context, snapshot) {
                         if (snapshot.connectionState == ConnectionState.waiting) {
                           return SkeletonStatItem(width: 50, height: 20);
@@ -2455,16 +2459,23 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                       }
                       
                       // Check if this is Baba Ji content - only show if following Baba Ji
-                      final isBabaJiContent = stories.any((story) => 
+                      // Method 1: Check by name/username patterns
+                      final isBabaJiContentByName = stories.any((story) => 
                         story.authorName.toLowerCase().contains('baba') || 
                         story.authorUsername.toLowerCase().contains('babaji') ||
                         story.authorName.toLowerCase().contains('dhani') ||
                         story.authorUsername.toLowerCase().contains('dhani')
                       );
                       
+                      // Method 2: Check if userId matches any Babaji page ID
+                      final isBabaJiContentById = _babaPageIds.isNotEmpty && _babaPageIds.contains(userId);
+                      
+                      // Combine both detection methods
+                      final isBabaJiContent = isBabaJiContentByName || isBabaJiContentById;
+                      
                       if (isBabaJiContent) {
                         // Only show Baba Ji content if user is following Baba Ji
-                        print('HomeScreen: Debug - Baba Ji content detected for user $userId (${stories.first.authorUsername}) - isFollowing: $_isFollowingBabaJi');
+                        print('HomeScreen: Debug - Baba Ji content detected for user $userId (${stories.first.authorUsername}) - byName: $isBabaJiContentByName, byId: $isBabaJiContentById, isFollowing: $_isFollowingBabaJi');
                         return _isFollowingBabaJi; // Show if following Baba Ji
                       }
                       
@@ -3157,6 +3168,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
               ),
             ),
             child: EnhancedPostWidget(
+              key: ValueKey('post_${post.id}'), // Add unique key to prevent unnecessary rebuilds
               post: post,
               onLike: post.isBabaJiPost ? () {
                 print('Liked Baba Ji post: ${post.id}');

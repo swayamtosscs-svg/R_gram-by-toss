@@ -6,6 +6,9 @@ import '../services/api_service.dart';
 import '../services/local_storage_service.dart';
 import '../services/baba_like_service.dart';
 import '../services/user_like_service.dart';
+import '../services/baba_comment_service.dart';
+import '../services/user_comment_service.dart';
+import '../services/posts_management_service.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../screens/user_profile_screen.dart';
@@ -47,6 +50,13 @@ class _EnhancedPostWidgetState extends State<EnhancedPostWidget> {
   bool _isPlaying = false;
   bool _isCaptionExpanded = false;
   int _likeCount = 0;
+  int _commentCount = 0;
+  bool _isInitialized = false; // Track if data has been loaded to prevent duplicate calls
+  
+  // Static cache to store API responses and prevent duplicate calls
+  static final Map<String, bool> _likeStatusCache = {};
+  static final Map<String, int> _likeCountCache = {};
+  static final Map<String, int> _commentCountCache = {};
 
   @override
   void initState() {
@@ -54,12 +64,34 @@ class _EnhancedPostWidgetState extends State<EnhancedPostWidget> {
     print('EnhancedPostWidget: Initializing post widget for post: ${widget.post.id}');
     print('EnhancedPostWidget: Post type: ${widget.post.type}, isReel: ${widget.post.isReel}, videoUrl: ${widget.post.videoUrl}');
     
-    // Initialize like count and status from post data
-    _likeCount = widget.post.likes;
-    _isLiked = widget.post.isLiked;
+    // Check cache FIRST (highest priority) - this ensures like state persists
+    final cacheKey = widget.post.id;
+    if (_likeStatusCache.containsKey(cacheKey)) {
+      _isLiked = _likeStatusCache[cacheKey]!;
+      print('EnhancedPostWidget: Using cached like status: $_isLiked');
+    } else {
+      // Use post's initial data if cache is empty
+      _isLiked = widget.post.isLiked;
+      print('EnhancedPostWidget: Using post initial like status: $_isLiked');
+    }
     
-    // Load like status for both Baba Ji posts and regular user posts
-    _loadLikeStatus();
+    if (_likeCountCache.containsKey(cacheKey)) {
+      _likeCount = _likeCountCache[cacheKey]!;
+    } else {
+      _likeCount = widget.post.likesCount > 0 ? widget.post.likesCount : widget.post.likes;
+    }
+    
+    if (_commentCountCache.containsKey(cacheKey)) {
+      _commentCount = _commentCountCache[cacheKey]!;
+    } else {
+      _commentCount = widget.post.comments;
+    }
+    
+    // Only load from API if not already initialized and cache is empty
+    if (!_isInitialized && !_likeStatusCache.containsKey(cacheKey) && !_commentCountCache.containsKey(cacheKey)) {
+      _isInitialized = true;
+      _loadInitialData();
+    }
     
     if (widget.post.type == PostType.reel || widget.post.isReel) {
       print('EnhancedPostWidget: This is a reel, initializing video...');
@@ -67,6 +99,14 @@ class _EnhancedPostWidgetState extends State<EnhancedPostWidget> {
     } else {
       print('EnhancedPostWidget: This is not a reel, skipping video initialization');
     }
+  }
+  
+  Future<void> _loadInitialData() async {
+    // Load like status for both Baba Ji posts and regular user posts
+    await _loadLikeStatus();
+    
+    // Load actual comment count
+    await _loadCommentCount();
   }
 
   @override
@@ -100,6 +140,19 @@ class _EnhancedPostWidgetState extends State<EnhancedPostWidget> {
 
   Future<void> _loadLikeStatus() async {
     try {
+      final cacheKey = widget.post.id;
+      
+      // Skip if already cached
+      if (_likeStatusCache.containsKey(cacheKey) && _likeCountCache.containsKey(cacheKey)) {
+        if (mounted) {
+          setState(() {
+            _isLiked = _likeStatusCache[cacheKey] ?? false;
+            _likeCount = _likeCountCache[cacheKey] ?? 0;
+          });
+        }
+        return;
+      }
+      
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
       final userId = authProvider.userProfile?.id;
       final token = authProvider.authToken;
@@ -128,32 +181,104 @@ class _EnhancedPostWidgetState extends State<EnhancedPostWidget> {
           );
         }
       } else {
-        // Handle regular user posts - use API to get like status
-        // For Baba Ji posts, remove the prefix to get the original post ID
-        String actualPostId = widget.post.id;
-        if (widget.post.isBabaJiPost) {
-          actualPostId = widget.post.id.replaceFirst('baba_', '');
+        // Handle regular user posts - use post's existing like status from PostsManagementService
+        // Posts from PostsManagementService already have isLiked and likesCount in the Post model
+        // So we can use those values directly instead of making another API call
+        if (mounted) {
+          setState(() {
+            _isLiked = widget.post.isLiked;
+            _likeCount = widget.post.likesCount;
+          });
+          
+          // Update cache
+          _likeStatusCache[cacheKey] = widget.post.isLiked;
+          _likeCountCache[cacheKey] = widget.post.likesCount;
         }
         
-        response = await ApiService.getPostLikeStatus(
-          postId: actualPostId,
-          token: token,
-        );
+        // Return early since we're using the post's existing data
+        return;
       }
 
       if (response != null && response['success'] == true && mounted) {
+        final isLiked = response?['data']?['liked'] ?? response?['data']?['isLiked'] ?? response?['isLiked'] ?? false;
+        final likeCount = response?['data']?['likesCount'] ?? response?['likeCount'] ?? _likeCount;
+        
+        // Update cache
+        _likeStatusCache[cacheKey] = isLiked;
+        _likeCountCache[cacheKey] = likeCount;
+        
         setState(() {
-          _isLiked = response?['data']?['liked'] ?? response?['data']?['isLiked'] ?? response?['isLiked'] ?? false;
-          // Update like count from server response if available
-          if (response?['data']?['likesCount'] != null) {
-            _likeCount = response?['data']?['likesCount'] ?? _likeCount;
-          } else if (response?['likeCount'] != null) {
-            _likeCount = response?['likeCount'] ?? _likeCount;
-          }
+          _isLiked = isLiked;
+          _likeCount = likeCount;
         });
       }
     } catch (e) {
       print('Error loading like status: $e');
+    }
+  }
+
+  Future<void> _loadCommentCount() async {
+    try {
+      final cacheKey = widget.post.id;
+      
+      // Skip if already cached
+      if (_commentCountCache.containsKey(cacheKey)) {
+        if (mounted) {
+          setState(() {
+            _commentCount = _commentCountCache[cacheKey] ?? 0;
+          });
+        }
+        return;
+      }
+      
+      String postId = widget.post.id;
+      
+      // Remove prefix for actual API post ID
+      if (widget.post.isBabaJiPost) {
+        if (widget.post.isReel) {
+          postId = widget.post.id.replaceFirst('baba_reel_', '');
+        } else {
+          postId = widget.post.id.replaceFirst('baba_', '');
+        }
+      }
+
+      List comments;
+      
+      if (widget.post.isBabaJiPost) {
+        // Load comments for Baba Ji posts
+        final response = await BabaCommentService.getComments(
+          postId: postId,
+          babaPageId: widget.post.babaPageId ?? '',
+          limit: 1000,
+        );
+        comments = response.comments;
+      } else {
+        // Load comments for regular user posts
+        final authProvider = Provider.of<AuthProvider>(context, listen: false);
+        final token = authProvider.authToken;
+        
+        if (token == null) return;
+        
+        final response = await UserCommentService.getComments(
+          postId: postId,
+          token: token,
+          limit: 1000,
+        );
+        comments = response.comments;
+      }
+      
+      // Update cache
+      _commentCountCache[cacheKey] = comments.length;
+      
+      if (mounted) {
+        setState(() {
+          _commentCount = comments.length;
+        });
+        print('EnhancedPostWidget: Loaded comment count: ${comments.length} for post $postId');
+      }
+    } catch (e) {
+      print('EnhancedPostWidget: Error loading comment count: $e');
+      // Keep the initial value from post data
     }
   }
 
@@ -515,6 +640,16 @@ class _EnhancedPostWidgetState extends State<EnhancedPostWidget> {
                       fontFamily: 'Poppins',
                     ),
                   ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '$_commentCount',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w400,
+                      color: Color(0xFF666666),
+                      fontFamily: 'Poppins',
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -582,48 +717,72 @@ class _EnhancedPostWidgetState extends State<EnhancedPostWidget> {
           }
         }
       } else {
-        // Handle regular user posts - use the working like API
-        // For Baba Ji posts, remove the prefix to get the original post ID
+        // Handle regular user posts - use PostsManagementService for posts from posts management API
         String actualPostId = widget.post.id;
         if (widget.post.isBabaJiPost) {
           actualPostId = widget.post.id.replaceFirst('baba_', '');
         }
         
-        print('EnhancedPostWidget: Attempting to like post with ID: $actualPostId (original: ${widget.post.id})');
+        print('EnhancedPostWidget: Attempting to like post with ID: $actualPostId (original: ${widget.post.id}) using PostsManagementService');
         print('EnhancedPostWidget: Post isBabaJiPost: ${widget.post.isBabaJiPost}');
         
         if (_isLiked) {
-          response = await ApiService.unlikePost(
-            postId: actualPostId,
+          // Use PostsManagementService for unlike
+          final unlikeResponse = await PostsManagementService.unlikePost(
             token: token,
-            userId: userId,
+            postId: actualPostId,
           );
+          
+          // Convert PostsManagementResponse to Map format expected by existing code
+          response = {
+            'success': unlikeResponse.success,
+            'message': unlikeResponse.message,
+            'data': {
+              'likesCount': unlikeResponse.likesCount ?? _likeCount,
+              'isLiked': unlikeResponse.isLiked ?? false,
+            },
+          };
         } else {
-          response = await ApiService.likePost(
-            postId: actualPostId,
+          // Use PostsManagementService for like
+          final likeResponse = await PostsManagementService.likePost(
             token: token,
-            userId: userId,
+            postId: actualPostId,
           );
+          
+          // Convert PostsManagementResponse to Map format expected by existing code
+          response = {
+            'success': likeResponse.success,
+            'message': likeResponse.message,
+            'data': {
+              'likesCount': likeResponse.likesCount ?? _likeCount,
+              'isLiked': likeResponse.isLiked ?? true,
+            },
+          };
         }
       }
 
       if (response != null && response['success'] == true) {
         if (mounted) {
+          // Get the actual like status from API response (not toggle - use server state)
+          final responseData = response?['data'];
+          final newIsLiked = responseData != null && responseData is Map<String, dynamic> 
+              ? (responseData['isLiked'] ?? !_isLiked)
+              : !_isLiked;
+          final newLikeCount = responseData != null && responseData is Map<String, dynamic> && responseData['likesCount'] != null
+              ? responseData['likesCount']
+              : (newIsLiked ? _likeCount + 1 : _likeCount - 1);
+          
           setState(() {
-            _isLiked = !_isLiked;
-            // Update like count from API response if available
-            final responseData = response?['data'];
-            if (responseData != null && responseData is Map<String, dynamic> && responseData['likesCount'] != null) {
-              _likeCount = responseData['likesCount'];
-            } else {
-              // Fallback to increment/decrement if API doesn't provide count
-              if (_isLiked) {
-                _likeCount++;
-              } else {
-                _likeCount--;
-              }
-            }
+            _isLiked = newIsLiked;
+            _likeCount = newLikeCount;
           });
+          
+          // Update cache permanently so state persists
+          final cacheKey = widget.post.id;
+          _likeStatusCache[cacheKey] = newIsLiked;
+          _likeCountCache[cacheKey] = newLikeCount;
+          
+          print('EnhancedPostWidget: Updated like state permanently - isLiked: $_isLiked, count: $_likeCount');
         }
         
         // Call the callback to notify parent if provided
@@ -684,6 +843,8 @@ class _EnhancedPostWidgetState extends State<EnhancedPostWidget> {
           onCommentAdded: () {
             // Call the callback to notify parent
             widget.onComment();
+            // Refresh comment count after adding comment
+            _loadCommentCount();
           },
         ),
       );
@@ -696,6 +857,8 @@ class _EnhancedPostWidgetState extends State<EnhancedPostWidget> {
           onCommentAdded: () {
             // Call the callback to notify parent
             widget.onComment();
+            // Refresh comment count after adding comment
+            _loadCommentCount();
           },
         ),
       );

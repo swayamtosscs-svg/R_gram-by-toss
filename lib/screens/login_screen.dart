@@ -172,7 +172,16 @@ class _LoginScreenState extends State<LoginScreen> {
                 fit: BoxFit.cover,
               ),
             ),
-            child: SafeArea(
+            child: Stack(
+              children: [
+                // Blur effect overlay
+                BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 3.0, sigmaY: 3.0),
+                  child: Container(
+                    color: Colors.transparent,
+                  ),
+                ),
+                SafeArea(
               child: Padding(
                 padding: ResponsiveUtils.getResponsivePadding(context, horizontal: 4.0),
                 child: Form(
@@ -511,6 +520,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
               ),
+            ),
+              ],
             ),
           ),
         );

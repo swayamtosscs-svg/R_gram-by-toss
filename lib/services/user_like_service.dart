@@ -37,101 +37,54 @@ class UserLikeService {
     return likedPosts.contains(postId);
   }
 
-  /// Like a user post (API + local fallback)
+  /// Like a user post - DISABLED: This functionality has been removed
+  @deprecated
   static Future<Map<String, dynamic>> likeUserPost({
     required String postId,
     required String token,
     required String userId,
   }) async {
-    try {
-      // Try the real API first
-      final response = await http.post(
-        Uri.parse('http://103.14.120.163:8081/api/likes/like'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'contentType': 'post',
-          'contentId': postId,
-        }),
-      );
-
-      print('UserLikeService: Like API response status: ${response.statusCode}');
-      print('UserLikeService: Like API response body: ${response.body}');
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final result = jsonDecode(response.body) as Map<String, dynamic>;
-        
-        // Also save to local storage for offline support
-        final likedPosts = await getLikedPosts();
-        likedPosts.add(postId);
-        await saveLikedPosts(likedPosts);
-        
-        return result;
-      } else {
-        print('UserLikeService: API failed with ${response.statusCode}, using local fallback');
-        return _fallbackLike(postId);
-      }
-    } catch (e) {
-      print('UserLikeService: Error calling like API: $e, using local fallback');
-      return _fallbackLike(postId);
-    }
+    // Like functionality has been disabled - return success with no-op
+    print('UserLikeService: Like functionality is disabled');
+    return {
+      'success': false,
+      'message': 'Like functionality has been disabled',
+      'data': {'likesCount': 0},
+    };
   }
 
-  /// Unlike a user post (API + local fallback)
+  /// Unlike a user post - DISABLED: This functionality has been removed
+  @deprecated
   static Future<Map<String, dynamic>> unlikeUserPost({
     required String postId,
     required String token,
     required String userId,
   }) async {
-    try {
-      // Try the real API first
-      final response = await http.post(
-        Uri.parse('http://103.14.120.163:8081/api/likes/unlike'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'contentType': 'post',
-          'contentId': postId,
-        }),
-      );
-
-      print('UserLikeService: Unlike API response status: ${response.statusCode}');
-      print('UserLikeService: Unlike API response body: ${response.body}');
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final result = jsonDecode(response.body) as Map<String, dynamic>;
-        
-        // Also remove from local storage
-        final likedPosts = await getLikedPosts();
-        likedPosts.remove(postId);
-        await saveLikedPosts(likedPosts);
-        
-        return result;
-      } else {
-        print('UserLikeService: API failed with ${response.statusCode}, using local fallback');
-        return _fallbackUnlike(postId);
-      }
-    } catch (e) {
-      print('UserLikeService: Error calling unlike API: $e, using local fallback');
-      return _fallbackUnlike(postId);
-    }
+    // Unlike functionality has been disabled - return success with no-op
+    print('UserLikeService: Unlike functionality is disabled');
+    return {
+      'success': false,
+      'message': 'Unlike functionality has been disabled',
+      'data': {'likesCount': 0},
+    };
   }
 
-  /// Toggle like/unlike
+  /// Toggle like/unlike - DISABLED: This functionality has been removed
+  @deprecated
   static Future<Map<String, dynamic>> toggleUserPostLike({
     required String postId,
     required String token,
     required String userId,
     required bool isCurrentlyLiked,
   }) async {
-    return isCurrentlyLiked
-        ? await unlikeUserPost(postId: postId, token: token, userId: userId)
-        : await likeUserPost(postId: postId, token: token, userId: userId);
-    }
+    // Toggle like functionality has been disabled - return no-op
+    print('UserLikeService: Toggle like functionality is disabled');
+    return {
+      'success': false,
+      'message': 'Toggle like functionality has been disabled',
+      'data': {'likesCount': 0},
+    };
+  }
 
   /// Local like
   static Map<String, dynamic> _fallbackLike(String postId) {

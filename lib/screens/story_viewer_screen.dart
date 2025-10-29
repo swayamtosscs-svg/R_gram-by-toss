@@ -431,7 +431,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                           child: story.authorAvatar != null && story.authorAvatar!.isNotEmpty && story.authorAvatar != 'null'
                               ? ClipOval(
                                   child: Image.network(
-                                    story.authorAvatar!,
+                                    _normalizeAvatarUrl(story.authorAvatar),
                                     width: 36,
                                     height: 36,
                                     fit: BoxFit.cover,
@@ -453,8 +453,10 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                                       );
                                     },
                                     errorBuilder: (context, error, stackTrace) {
+                                      final normalizedUrl = _normalizeAvatarUrl(story.authorAvatar);
                                       print('StoryViewerScreen: Error loading DP for ${story.authorName}: $error');
-                                      print('StoryViewerScreen: DP URL: ${story.authorAvatar}');
+                                      print('StoryViewerScreen: Original DP URL: ${story.authorAvatar}');
+                                      print('StoryViewerScreen: Normalized DP URL: $normalizedUrl');
                                       return Icon(
                                         Icons.person,
                                         color: Colors.grey[600],
@@ -891,9 +893,13 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     _viewedStoryIds.add(currentStory.id);
     final indices = _getCurrentAuthorStoryIndices();
     final currentWithin = indices.indexOf(_currentIndex);
+    
+    print('StoryViewerScreen: Current story completed. Author stories: ${indices.length}, Position: $currentWithin');
+    
     if (currentWithin < indices.length - 1) {
       // Next story of same author
       final nextIndex = indices[currentWithin + 1];
+      print('StoryViewerScreen: Moving to next story of same author at index $nextIndex');
       _pageController.animateToPage(
         nextIndex,
         duration: const Duration(milliseconds: 250),
@@ -902,13 +908,17 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     } else {
       // Move to first story of next author, or close if none
       final nextAuthorFirstIndex = _getFirstIndexOfNextAuthor();
+      print('StoryViewerScreen: No more stories from current author. Next author index: $nextAuthorFirstIndex');
+      
       if (nextAuthorFirstIndex != null) {
+        print('StoryViewerScreen: Moving to next user\'s first story at index $nextAuthorFirstIndex');
         _pageController.animateToPage(
           nextAuthorFirstIndex,
           duration: const Duration(milliseconds: 250),
           curve: Curves.easeInOut,
         );
       } else {
+        print('StoryViewerScreen: No more stories available, closing story viewer');
         if (mounted) {
           Navigator.of(context).pop();
         }
@@ -989,20 +999,36 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     final indices = _getCurrentAuthorStoryIndices();
     final pos = indices.indexOf(_currentIndex);
     if (pos < 0) return;
+    
+    print('StoryViewerScreen: Going to next story. Current position: $pos, Total author stories: ${indices.length}');
+    
     if (pos < indices.length - 1) {
+      // Move to next story of same author
+      final nextIndex = indices[pos + 1];
+      print('StoryViewerScreen: Moving to next story of same author at index $nextIndex');
       _pageController.animateToPage(
-        indices[pos + 1],
+        nextIndex,
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeInOut,
       );
     } else {
+      // Move to first story of next author, or close if none
       final nextFirst = _getFirstIndexOfNextAuthor();
+      print('StoryViewerScreen: Last story of current author. Next author first index: $nextFirst');
+      
       if (nextFirst != null) {
+        print('StoryViewerScreen: Automatically moving to next user\'s first story at index $nextFirst');
         _pageController.animateToPage(
           nextFirst,
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeInOut,
         );
+      } else {
+        print('StoryViewerScreen: No more stories, closing viewer');
+        // Close story viewer if no more stories
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
       }
     }
   }
@@ -1059,6 +1085,33 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
         ),
       );
     }
+  }
+  
+  /// Normalize avatar URL by adding base URL if it's a relative path
+  String _normalizeAvatarUrl(String? avatarUrl) {
+    if (avatarUrl == null || avatarUrl.isEmpty || avatarUrl == 'null') {
+      return '';
+    }
+    
+    // If already a full URL (starts with http:// or https://), return as is
+    if (avatarUrl.startsWith('http://') || avatarUrl.startsWith('https://')) {
+      return avatarUrl;
+    }
+    
+    // If it's a relative path (starts with /), prepend the base URL
+    if (avatarUrl.startsWith('/')) {
+      // Base URL from your API
+      const String baseUrl = 'http://103.14.120.163:8081';
+      return '$baseUrl$avatarUrl';
+    }
+    
+    // If it starts with uploads, prepend base URL
+    if (avatarUrl.startsWith('uploads/')) {
+      const String baseUrl = 'http://103.14.120.163:8081';
+      return '$baseUrl/$avatarUrl';
+    }
+    
+    return avatarUrl;
   }
 }
 
