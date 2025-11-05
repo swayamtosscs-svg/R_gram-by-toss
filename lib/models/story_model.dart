@@ -10,6 +10,8 @@ class Story {
   final String mediaId; // Add media ID for retrieval
   final String type;
   final String? caption; // Add caption/description field
+  final String? songPath; // Audio file path/URL
+  final String? songName; // Audio file name
   final List<String> mentions;
   final List<String> hashtags;
   final bool isActive;
@@ -29,6 +31,8 @@ class Story {
     required this.mediaId,
     required this.type,
     this.caption, // Add caption parameter
+    this.songPath, // Add audio path parameter
+    this.songName, // Add audio name parameter
     required this.mentions,
     required this.hashtags,
     required this.isActive,
@@ -56,6 +60,8 @@ class Story {
       mediaId: json['mediaId'] ?? json['_id'] ?? '', // Use media ID if available, fallback to story ID
       type: json['type'] ?? '',
       caption: json['caption'] ?? json['description'], // Add caption field
+      songPath: json['songPath'] ?? json['audioPath'], // Add audio path field
+      songName: json['songName'] ?? json['audioName'], // Add audio name field
       mentions: List<String>.from(json['mentions'] ?? []),
       hashtags: List<String>.from(json['hashtags'] ?? []),
       isActive: json['isActive'] ?? false,
@@ -79,6 +85,8 @@ class Story {
       'media': media,
       'type': type,
       'caption': caption, // Add caption field
+      'songPath': songPath, // Add audio path field
+      'songName': songName, // Add audio name field
       'mentions': mentions,
       'hashtags': hashtags,
       'isActive': isActive,
@@ -100,6 +108,8 @@ class Story {
     String? mediaId,
     String? type,
     String? caption, // Add caption parameter
+    String? songPath, // Add audio path parameter
+    String? songName, // Add audio name parameter
     List<String>? mentions,
     List<String>? hashtags,
     bool? isActive,
@@ -119,6 +129,8 @@ class Story {
       mediaId: mediaId ?? this.mediaId,
       type: type ?? this.type,
       caption: caption ?? this.caption, // Add caption field
+      songPath: songPath ?? this.songPath, // Add audio path field
+      songName: songName ?? this.songName, // Add audio name field
       mentions: mentions ?? this.mentions,
       hashtags: hashtags ?? this.hashtags,
       isActive: isActive ?? this.isActive,

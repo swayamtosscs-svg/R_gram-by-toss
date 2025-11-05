@@ -52,6 +52,7 @@ dependencies:
   cached_network_image: ^3.4.1
   image_picker: ^1.1.2  # Re-enabled for image/video picking
   image_cropper: ^8.0.2  # Re-enabled for image cropping functionality
+  file_picker: ^10.3.3  # For file picking functionality
   media_kit: ^1.1.10  # Re-enabled for video playback
   media_kit_video: ^1.1.10  # Re-enabled for video playback
   video_player: ^2.10.0  # Fallback video player
@@ -74,6 +75,9 @@ dependencies:
   dio: ^5.8.0+1
   web_socket_channel: ^3.0.0
   
+  # Payment
+  razorpay_flutter: ^1.4.0
+  
   # Local Storage
   shared_preferences: ^2.5.3
   
@@ -95,9 +99,12 @@ dependencies:
   permission_handler: ^12.0.1  # For microphone and camera permissions
   # flutter_webrtc: ^0.9.48  # WebRTC for voice/video calls - temporarily disabled due to compatibility issues
   socket_io_client: ^2.0.3+1  # Real-time communication
-  audioplayers: ^6.0.0  # For call ringtones and sounds
+  audioplayers: ^5.2.1  # For call ringtones and sounds
   camera_windows: ^0.2.6+2
   # webview_windows: ^0.1.4  # Using webview_flutter instead for better compatibility
+  
+  # Live Streaming
+  zego_uikit_prebuilt_live_streaming: ^3.15.0
 
 dev_dependencies:
   flutter_test:
@@ -126,6 +133,7 @@ flutter:
     - assets/images/
     - assets/icons/
     - assets/video/
+    - assets/audio/
     # - assets/animations/  # Removed: directory not present
     # - assets/fonts/       # Removed: directory not present
   #   - images/a_dot_burr.jpeg

@@ -1,6 +1,10 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/theme_service.dart';
+import '../services/razorpay_payment_service.dart';
+import '../providers/auth_provider.dart';
 import '../screens/home_screen.dart';
 import '../screens/live_stream_screen.dart';
 import '../screens/reels_screen.dart';
@@ -36,6 +40,9 @@ class _GlobalNavigationWrapperState extends State<GlobalNavigationWrapper> {
     super.initState();
     _currentIndex = _initialScreenIndex;
     
+    // Initialize Razorpay payment service
+    RazorpayPaymentService().initialize();
+    
     // Only initialize the initial screen immediately
     if (_initializedPages[_initialScreenIndex] == null) {
       _initializedPages[_initialScreenIndex] = _createPage(_initialScreenIndex);
@@ -63,6 +70,12 @@ class _GlobalNavigationWrapperState extends State<GlobalNavigationWrapper> {
   }
 
   void _onTabTapped(int index) {
+    // Special handling for Live Darshan (index 4) - show payment on Android
+    if (index == 4) {
+      _handleLiveDarshanAccess();
+      return;
+    }
+    
     // If leaving reels section (index 1), pause all videos
     if (_currentIndex == 1 && index != 1) {
       print('GlobalNavigation: Leaving reels section, pausing videos');
@@ -78,6 +91,259 @@ class _GlobalNavigationWrapperState extends State<GlobalNavigationWrapper> {
     setState(() {
       _currentIndex = index;
     });
+  }
+
+  /// Handle Live Darshan access with payment (Android only)
+  /// 
+  /// NOTE: Payment is ONLY required to access the Live Darshan section.
+  /// Once inside, "Start Live" (host) and "Join Live" (viewer) buttons 
+  /// work normally WITHOUT any payment requirement.
+  void _handleLiveDarshanAccess() {
+    // Check if Android platform
+    if (!Platform.isAndroid) {
+      // For non-Android platforms, directly navigate to Live Darshan
+      _navigateToLiveDarshan();
+      return;
+    }
+
+    // Show payment dialog/process payment on Android
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final userEmail = authProvider.userProfile?.email;
+    final userContact = authProvider.userProfile?.phoneNumber;
+
+    // Show payment confirmation dialog first
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.grey[900],
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: Row(
+          children: [
+            Icon(Icons.payment, color: Colors.deepPurple[400], size: 24),
+            const SizedBox(width: 8),
+            const Text(
+              'Live Darshan Access',
+              style: TextStyle(
+                color: Colors.white,
+                fontFamily: 'Poppins',
+                fontWeight: FontWeight.w600,
+                fontSize: 18,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'To access Live Darshan, please complete a payment of ₹1.',
+              style: TextStyle(
+                color: Colors.white,
+                fontFamily: 'Poppins',
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.deepPurple.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: Colors.deepPurple.withOpacity(0.5),
+                  width: 1,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, color: Colors.deepPurple[300], size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Payment required for Live Darshan access',
+                      style: TextStyle(
+                        color: Colors.deepPurple[200],
+                        fontFamily: 'Poppins',
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'Cancel',
+              style: TextStyle(
+                color: Colors.grey[400],
+                fontFamily: 'Poppins',
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _processPayment(userEmail, userContact);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.deepPurple,
+            ),
+            child: const Text(
+              'Pay ₹1',
+              style: TextStyle(
+                color: Colors.white,
+                fontFamily: 'Poppins',
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Process Razorpay payment for Live Darshan
+  void _processPayment(String? userEmail, String? userContact) {
+    final paymentService = RazorpayPaymentService();
+    
+    // Ensure payment service is initialized
+    paymentService.initialize();
+    
+    debugPrint('Starting payment process for Live Darshan...');
+
+    if (!paymentService.isSupported()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+            'Payment is only supported on Android devices.',
+            style: TextStyle(fontFamily: 'Poppins'),
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Show loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(
+          color: Colors.deepPurple,
+        ),
+      ),
+    );
+
+    // Process payment
+    paymentService.processLiveDarshanPayment(
+      userEmail: userEmail,
+      userContact: userContact,
+      onSuccess: (paymentId) {
+        debugPrint('Payment success callback received! Payment ID: $paymentId');
+        
+        // Close loading dialog if it's still open
+        if (Navigator.canPop(context)) {
+          Navigator.pop(context);
+        }
+        
+        debugPrint('Closing loading dialog and navigating to Live Darshan...');
+        
+        // Navigate to Live Darshan screen immediately
+        _navigateToLiveDarshan();
+        
+        // Show success message after navigation
+        Future.delayed(const Duration(milliseconds: 500), () {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    const Icon(Icons.check_circle, color: Colors.white, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Payment successful! Welcome to Live Darshan',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontFamily: 'Poppins',
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                backgroundColor: Colors.green,
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+        });
+      },
+      onError: (error) {
+        // Close loading dialog
+        Navigator.pop(context);
+        
+        // Show error message
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error_outline, color: Colors.white, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    error,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontFamily: 'Poppins',
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Navigate to Live Darshan screen
+  void _navigateToLiveDarshan() {
+    // Only initialize the page if it hasn't been initialized yet
+    if (_initializedPages[4] == null) {
+      print('GlobalNavigation: Lazy loading Live Darshan screen');
+      _initializedPages[4] = _createPage(4);
+    }
+    
+    // Use WidgetsBinding to ensure navigation happens after current frame
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        setState(() {
+          _currentIndex = 4;
+        });
+        print('GlobalNavigation: Navigated to Live Darshan (index 4)');
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    RazorpayPaymentService().dispose();
+    super.dispose();
   }
 
   @override

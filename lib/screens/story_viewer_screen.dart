@@ -1,11 +1,15 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:audioplayers/audioplayers.dart';
 import '../models/story_model.dart';
 import '../models/highlight_model.dart';
 // Removed Cloudinary dependency
 import '../services/story_service.dart';
 import '../services/highlight_service.dart';
 import '../services/baba_page_story_service.dart'; // Added for Babaji story deletion
+import '../services/story_audio_service.dart';
+import '../services/predefined_audio_service.dart';
 import '../providers/auth_provider.dart';
 import '../widgets/video_player_widget.dart';
 import 'create_highlight_screen.dart';
@@ -41,6 +45,12 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   double _dragStartY = 0;
   double _dragOffsetY = 0;
   bool _isDragging = false;
+  
+  // Audio player
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  bool _isMuted = false;
+  String? _currentSongPath;
+  String? _currentSongName; // Store current song name for display
 
   @override
   void initState() {
@@ -58,13 +68,130 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       });
 
     _startTimerForCurrentStory();
+    // Play audio if available for initial story
+    _playAudioForStory(widget.allStories[_currentIndex]);
   }
 
   @override
   void dispose() {
+    _audioPlayer.dispose();
     _pageController.dispose();
     _progressController.dispose();
     super.dispose();
+  }
+  
+  // Play audio for current story
+  Future<void> _playAudioForStory(Story story) async {
+    try {
+      // Stop current audio if playing
+      await _audioPlayer.stop();
+      
+      String? audioPath = story.songPath;
+      String? audioName = story.songName;
+      
+      // If audio info not in story, try to get from local storage
+      if ((audioPath == null || audioPath.isEmpty) && story.id.isNotEmpty) {
+        final audioInfo = await StoryAudioService.getStoryAudio(story.id);
+        audioPath = audioInfo['songPath'];
+        audioName = audioInfo['songName'];
+        print('StoryViewerScreen: Retrieved audio from local storage for story ${story.id}: $audioName');
+      }
+      
+      if (audioPath != null && audioPath.isNotEmpty) {
+        // Check the type of audio source
+        if (audioPath.startsWith('http://') || audioPath.startsWith('https://')) {
+          // It's a URL
+          await _audioPlayer.play(UrlSource(audioPath));
+          print('StoryViewerScreen: Playing audio from URL: $audioPath');
+        } else if (audioPath.startsWith('assets/')) {
+          // It's an asset file (predefined audio)
+          // For AssetSource, remove 'assets/' prefix (audioplayers expects path relative to assets folder)
+          String assetPath = audioPath;
+          if (assetPath.startsWith('assets/')) {
+            assetPath = assetPath.substring(7); // Remove 'assets/' prefix (7 chars)
+          }
+          
+          print('StoryViewerScreen: Attempting to play asset audio');
+          print('StoryViewerScreen: Original path: $audioPath');
+          print('StoryViewerScreen: Asset path (without assets/): $assetPath');
+          
+          try {
+            // Try with path without 'assets/' prefix first (this is the standard way)
+            await _audioPlayer.play(AssetSource(assetPath));
+            print('StoryViewerScreen: Successfully started playing asset audio: $assetPath');
+          } catch (assetError) {
+            print('StoryViewerScreen: Error with AssetSource (without prefix): $assetError');
+            // Try alternative: use the full path with 'assets/' prefix
+            try {
+              await _audioPlayer.play(AssetSource(audioPath));
+              print('StoryViewerScreen: Successfully started playing with full path: $audioPath');
+            } catch (e) {
+              print('StoryViewerScreen: Failed to play asset audio with both methods');
+              print('StoryViewerScreen: Error details: $e');
+              // Show user-friendly error message
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Could not play audio: ${e.toString()}'),
+                    backgroundColor: Colors.red,
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+              }
+              _currentSongPath = null;
+              _currentSongName = null;
+              setState(() {});
+              return;
+            }
+          }
+          
+          // Get proper name if not already set
+          if (audioName == null || audioName.isEmpty) {
+            audioName = PredefinedAudioService.getAudioNameFromPath(audioPath);
+          }
+        } else {
+          // It's a local file path
+          final audioFile = File(audioPath);
+          if (await audioFile.exists()) {
+            await _audioPlayer.play(DeviceFileSource(audioPath));
+            print('StoryViewerScreen: Playing audio from local file: $audioPath');
+          } else {
+            print('StoryViewerScreen: Audio file not found at path: $audioPath');
+            _currentSongPath = null;
+            _currentSongName = null;
+            setState(() {});
+            return;
+          }
+        }
+        _currentSongPath = audioPath;
+        _currentSongName = audioName;
+        // Update state to show song name in UI
+        setState(() {});
+      } else {
+        _currentSongPath = null;
+        _currentSongName = null;
+        setState(() {});
+        print('StoryViewerScreen: No audio found for story ${story.id}');
+      }
+    } catch (e) {
+      print('StoryViewerScreen: Error playing audio: $e');
+      _currentSongPath = null;
+      _currentSongName = null;
+      setState(() {});
+    }
+  }
+  
+  // Toggle mute/unmute
+  void _toggleMute() {
+    setState(() {
+      _isMuted = !_isMuted;
+    });
+    
+    if (_isMuted) {
+      _audioPlayer.pause();
+    } else {
+      _audioPlayer.resume();
+    }
   }
 
   @override
@@ -111,6 +238,8 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                     _currentIndex = index;
                   });
                   _startTimerForCurrentStory();
+                  // Play audio for new story
+                  _playAudioForStory(widget.allStories[index]);
                 },
                 itemCount: widget.allStories.length,
                 itemBuilder: (context, index) {
@@ -383,6 +512,49 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                 ),
               ),
             ],
+            
+            // Song name display (if audio is available)
+            Builder(
+              builder: (context) {
+                // Use current song name from state or story object
+                final displaySongName = _currentSongName ?? story.songName;
+                if (displaySongName != null && displaySongName.isNotEmpty) {
+                  return Column(
+                    children: [
+                      SizedBox(height: 12),
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.orange.withOpacity(0.5), width: 1),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.music_note, color: Colors.white, size: 20),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                displaySongName,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                }
+                return SizedBox.shrink();
+              },
+            ),
           ],
         ),
       ),
@@ -540,6 +712,37 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
             ),
             
             const SizedBox(width: 16),
+            
+            // Mute/Unmute button (if audio is available)
+            Builder(
+              builder: (context) {
+                final story = widget.allStories[_currentIndex];
+                // Check if audio is available from story or local storage
+                final hasAudio = (story.songPath != null && story.songPath!.isNotEmpty) ||
+                                (_currentSongPath != null && _currentSongPath!.isNotEmpty);
+                if (hasAudio) {
+                  return GestureDetector(
+                    onTap: _toggleMute,
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.5),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        _isMuted ? Icons.volume_off : Icons.volume_up,
+                        color: Colors.white,
+                        size: 24,
+                      ),
+                    ),
+                  );
+                }
+                return SizedBox.shrink();
+              },
+            ),
+            
+            const SizedBox(width: 12),
             
             // Three-dot menu for story options (only for user's own stories)
             if (_isCurrentUserStory())

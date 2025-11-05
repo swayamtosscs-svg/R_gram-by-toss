@@ -28,7 +28,7 @@ android {
         applicationId = "com.example.r_gram"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = 23  // Required by camera plugin
+        minSdk = 23  // Required by camera plugin (ZegoCloud requires min 21)
         targetSdk = 34  // Reduced from 35 for stability
         versionCode = flutter.versionCode
         versionName = flutter.versionName

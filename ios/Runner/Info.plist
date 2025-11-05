@@ -47,9 +47,9 @@
 	<true/>
 	<!-- Camera permissions for live streaming -->
 	<key>NSCameraUsageDescription</key>
-	<string>This app needs access to camera for live streaming</string>
+	<string>We require camera access to connect to a live stream</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>This app needs access to microphone for live streaming</string>
+	<string>We require microphone access to connect to a live stream</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>This app needs access to photo library to select profile pictures</string>
 	<!-- Allow HTTP traffic for video streaming -->

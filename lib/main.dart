@@ -26,19 +26,20 @@ import 'screens/video_test_screen.dart';
 import 'screens/forgot_password_screen.dart';
 import 'screens/host_page.dart';
 import 'screens/viewer_page.dart';
+import 'screens/in_app_viewer_screen.dart';
 import 'screens/admin_login_screen.dart';
+import 'models/live_stream_model.dart';
 import 'screens/super_admin_create_screen.dart';
 import 'screens/admin_create_screen.dart';
 import 'screens/admin_dashboard_screen.dart';
 import 'screens/verification_request_screen.dart';
 import 'screens/admin_verification_screen.dart';
 import 'screens/reels_screen.dart';
-import 'screens/create_live_stream_screen.dart';
-import 'screens/live_stream_viewer_screen.dart';
 import 'screens/baba_page_detail_screen.dart';
 import 'screens/baba_profile_ui_demo.dart';
 import 'screens/baba_pages_screen.dart';
 import 'screens/discover_users_screen.dart';
+import 'screens/zego_live_streaming_screen.dart';
 import 'widgets/global_navigation_wrapper.dart';
 import 'profile_ui.dart';
 
@@ -78,8 +79,8 @@ class DivineConnectApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (context) => AuthProvider()),
         ChangeNotifierProvider(create: (context) => AdminProvider()),
-        ChangeNotifierProvider(create: (context) => LiveStreamProvider()),
         ChangeNotifierProvider(create: (context) => ThemeService()),
+        ChangeNotifierProvider(create: (context) => LiveStreamProvider()),
       ],
       child: Consumer<ThemeService>(
         builder: (context, themeService, child) {
@@ -138,13 +139,33 @@ class DivineConnectApp extends StatelessWidget {
               '/admin/verification': (context) => const AdminVerificationScreen(),
               '/verification-request': (context) => const VerificationRequestScreen(),
               '/reels': (context) => const ReelsScreen(),
-              '/create-live-stream': (context) => const CreateLiveStreamScreen(),
+              '/create-live-stream': (context) => const HostPage(),
               '/live-stream-viewer': (context) {
                 final args = ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>?;
-                return LiveStreamViewerScreen(
-                  room: args?['room'],
-                  authToken: args?['authToken'],
-                );
+                final room = args?['room'];
+                if (room is LiveRoom) {
+                  return InAppViewerScreen(
+                    stream: {
+                      'id': room.id,
+                      'title': room.title,
+                      'hostName': room.hostName,
+                      'joinUrl': room.joinUrl ?? '',
+                      'hostUrl': room.hostUrl ?? '',
+                    },
+                    userName: args?['userName'] as String?,
+                  );
+                } else if (room is Map<String, dynamic>) {
+                  return InAppViewerScreen(
+                    stream: room,
+                    userName: args?['userName'] as String?,
+                  );
+                } else {
+                  return const Scaffold(
+                    body: Center(
+                      child: Text('Invalid room data'),
+                    ),
+                  );
+                }
               },
               '/baba-page-detail': (context) {
                 final args = ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>?;
@@ -228,6 +249,15 @@ class DivineConnectApp extends StatelessWidget {
                 child: ProfileUI(),
                 initialIndex: 5,
               ),
+              '/zego-live-stream': (context) {
+                final args = ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>?;
+                return ZegoLiveStreamingScreen(
+                  userID: args?['userID'] ?? 'user_${DateTime.now().millisecondsSinceEpoch}',
+                  userName: args?['userName'] ?? 'User',
+                  liveID: args?['liveID'] ?? 'live_${DateTime.now().millisecondsSinceEpoch}',
+                  isHost: args?['isHost'] ?? false,
+                );
+              },
             },
           );
         },

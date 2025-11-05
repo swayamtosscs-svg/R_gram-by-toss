@@ -229,16 +229,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _loadMessages() async {
-    print('ChatScreen: _loadMessages called');
+  Future<void> _loadMessages({bool forceRefresh = false}) async {
+    print('ChatScreen: _loadMessages called (forceRefresh: $forceRefresh)');
     print('ChatScreen: _currentThreadId: $_currentThreadId');
     print('ChatScreen: _messages.length: ${_messages.length}');
     print('ChatScreen: _lastRefreshTime: $_lastRefreshTime');
     
-    // Don't reload if we already have messages and it's been less than 30 seconds since last load
-    if (_messages.isNotEmpty && _lastRefreshTime != null) {
+    // Only skip reload if not forcing and messages were loaded recently
+    if (!forceRefresh && _messages.isNotEmpty && _lastRefreshTime != null) {
       final timeSinceLastLoad = DateTime.now().difference(_lastRefreshTime!);
-      if (timeSinceLastLoad.inSeconds < 30) {
+      if (timeSinceLastLoad.inSeconds < 10) {
         print('ChatScreen: Skipping reload - messages loaded recently');
         return;
       }
@@ -274,25 +274,36 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               _hasNewMessages = true;
             }
             
-            // Merge messages instead of replacing - preserve locally added messages
-            final existingMessageIds = _messages.map((m) => m.id).toSet();
-            final newServerMessages = activeMessages.where((m) => !existingMessageIds.contains(m.id)).toList();
-            
-            // Add new messages from server
-            _messages.addAll(newServerMessages);
-            
-            // Update existing messages with server data (in case server has updated fields)
-            for (final serverMessage in activeMessages) {
-              final index = _messages.indexWhere((m) => m.id == serverMessage.id);
-              if (index != -1) {
-                _messages[index] = serverMessage;
+            // For force refresh or initial load, completely replace with server data
+            // This ensures old messages show consistently on both mobile and Windows
+            if (forceRefresh || _messages.isEmpty || _lastMessageCount == 0) {
+              // Complete replacement for consistency across platforms
+              _messages = List.from(activeMessages);
+              print('ChatScreen: Completely replaced messages with server data (${_messages.length} messages)');
+            } else {
+              // Merge mode: Update existing and add new
+              final serverMessageIds = activeMessages.map((m) => m.id).toSet();
+              
+              // Remove messages that no longer exist on server (deleted messages)
+              _messages.removeWhere((m) => !serverMessageIds.contains(m.id));
+              
+              // Update existing messages with server data (ensures consistency)
+              for (final serverMessage in activeMessages) {
+                final index = _messages.indexWhere((m) => m.id == serverMessage.id);
+                if (index != -1) {
+                  // Replace with server data to ensure consistency
+                  _messages[index] = serverMessage;
+                } else {
+                  // Add new messages from server
+                  _messages.add(serverMessage);
+                }
               }
             }
             
             // Sort messages by creation time to maintain chronological order
             _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
             
-            // Remove duplicates based on ID
+            // Remove duplicates based on ID (just in case)
             _messages = _messages.fold<List<Message>>([], (list, message) {
               if (!list.any((m) => m.id == message.id)) {
                 list.add(message);
@@ -304,7 +315,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
             
             _lastMessageCount = _messages.length;
-            print('ChatScreen: Merged messages. Total: ${_messages.length} (${newServerMessages.length} new from server)');
+            print('ChatScreen: Loaded ${_messages.length} messages from server (ensuring all old messages are shown)');
             
             _isLoading = false;
           });
@@ -364,20 +375,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             final activeMessages = messages.where((m) => !m.isDeleted).toList();
             
             setState(() {
-              // Merge messages instead of replacing
-              final existingMessageIds = _messages.map((m) => m.id).toSet();
-              final newServerMessages = activeMessages.where((m) => !existingMessageIds.contains(m.id)).toList();
-              
-              // Add new messages from server
-              _messages.addAll(newServerMessages);
-              
-              // Update existing messages with server data
-              for (final serverMessage in activeMessages) {
-                final index = _messages.indexWhere((m) => m.id == serverMessage.id);
-                if (index != -1) {
-                  _messages[index] = serverMessage;
-                }
-              }
+              // For new thread creation, completely replace with server data
+              // This ensures old messages show consistently on both mobile and Windows
+              _messages = List.from(activeMessages);
               
               // Sort messages by creation time
               _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
@@ -392,6 +392,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               
               // Re-sort after removing duplicates
               _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+              
+              print('ChatScreen: Loaded ${_messages.length} messages from server for new thread (ensuring all old messages are shown)');
               
               _isLoading = false;
             });
@@ -440,7 +442,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     // Only start polling if we have a real thread ID
     if (_currentThreadId != null && !_currentThreadId!.startsWith('temp_')) {
       print('ChatScreen: Starting message polling for thread: $_currentThreadId');
-      _messagePollingTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      // Stop existing timer if any
+      _stopMessagePolling();
+      // Poll every 2 seconds for real-time updates
+      _messagePollingTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
         _pollForNewMessages();
       });
     } else {
@@ -470,10 +475,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         token: authProvider.authToken!,
       );
 
-      if (mounted && messages.isNotEmpty) {
+      if (mounted) {
         // Filter out deleted messages from the server response
         final activeMessages = messages.where((m) => !m.isDeleted).toList();
         
+        // Always check for updates, even if messages list is empty
         // Check if we have new messages or if any existing messages were deleted
         final existingMessageIds = _messages.map((m) => m.id).toSet();
         final newMessages = activeMessages.where((m) => !existingMessageIds.contains(m.id)).toList();
@@ -482,21 +488,57 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         final serverMessageIds = activeMessages.map((m) => m.id).toSet();
         final deletedMessages = _messages.where((m) => !serverMessageIds.contains(m.id)).toList();
 
-        if (newMessages.isNotEmpty || deletedMessages.isNotEmpty) {
-          print('ChatScreen: Found ${newMessages.length} new messages and ${deletedMessages.length} deleted messages via polling');
+        // Also check if any existing messages have been updated (e.g., read status changed)
+        bool hasUpdates = false;
+        for (final serverMessage in activeMessages) {
+          final localIndex = _messages.indexWhere((m) => m.id == serverMessage.id);
+          if (localIndex != -1) {
+            // Update existing message with server data
+            if (_messages[localIndex].isRead != serverMessage.isRead ||
+                _messages[localIndex].content != serverMessage.content ||
+                _messages[localIndex].mediaUrl != serverMessage.mediaUrl) {
+              hasUpdates = true;
+              break;
+            }
+          }
+        }
+
+        if (newMessages.isNotEmpty || deletedMessages.isNotEmpty || hasUpdates) {
+          print('ChatScreen: Found ${newMessages.length} new messages, ${deletedMessages.length} deleted messages, and updates via polling');
           setState(() {
             // Remove deleted messages
             _messages.removeWhere((m) => deletedMessages.any((dm) => dm.id == m.id));
+            
+            // Update existing messages with server data
+            for (final serverMessage in activeMessages) {
+              final index = _messages.indexWhere((m) => m.id == serverMessage.id);
+              if (index != -1) {
+                _messages[index] = serverMessage;
+              }
+            }
             
             // Add new messages
             _messages.addAll(newMessages);
             
             // Sort messages by creation time to maintain chronological order
             _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+            
+            // Remove duplicates based on ID
+            _messages = _messages.fold<List<Message>>([], (list, message) {
+              if (!list.any((m) => m.id == message.id)) {
+                list.add(message);
+              }
+              return list;
+            });
+            
+            // Re-sort after removing duplicates
+            _messages.sort((a, b) => a.createdAt.compareTo(b.createdAt));
           });
           
           if (newMessages.isNotEmpty) {
             _scrollToBottom();
+            // Cache updated messages
+            await _cacheAllMessages();
           }
         }
       }
@@ -873,6 +915,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         
         // Add the new message to the list immediately with proper data from API
         final messageId = response['data']?['messageId'] ?? DateTime.now().millisecondsSinceEpoch.toString();
+        final serverCreatedAt = response['data']?['createdAt'];
+        final createdAt = serverCreatedAt != null 
+            ? DateTime.parse(serverCreatedAt) 
+            : DateTime.now();
+        
         final newMessage = Message(
           id: messageId,
           threadId: _currentThreadId ?? '',
@@ -888,12 +935,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
           isRead: false,
           isDeleted: false,
           reactions: [],
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
+          createdAt: createdAt,
+          updatedAt: createdAt,
         );
         
         print('ChatScreen: Adding new message to local list: ${newMessage.content}');
-        print('ChatScreen: Message ID: ${newMessage.id}');
+        print('ChatScreen: Message ID from server: ${newMessage.id}');
         print('ChatScreen: Using thread ID: $_currentThreadId');
         
         // Check if message already exists (avoid duplicates)
@@ -921,12 +968,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         // Clear notification dot when user sends a message
         _clearNewMessageNotification();
         
-        // Refresh messages after a short delay to ensure server has processed it
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (mounted && _currentThreadId != null && !_currentThreadId!.startsWith('temp_')) {
-            _loadMessages();
-          }
-        });
+        // Immediately poll for new messages to get server confirmation
+        // This ensures the message appears on both sides in real-time
+        if (mounted && _currentThreadId != null && !_currentThreadId!.startsWith('temp_')) {
+          // Poll immediately after sending
+          Future.delayed(const Duration(milliseconds: 300), () {
+            _pollForNewMessages();
+          });
+          // Also refresh after a short delay to ensure server has processed it
+          Future.delayed(const Duration(milliseconds: 1000), () {
+            if (mounted && _currentThreadId != null && !_currentThreadId!.startsWith('temp_')) {
+              _pollForNewMessages();
+            }
+          });
+        }
         
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -1537,13 +1592,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (_currentThreadId != null && !_currentThreadId!.startsWith('temp_')) {
       print('ChatScreen: Manual refresh requested for real thread');
       _lastRefreshTime = null; // Force reload
-      _loadMessages();
+      _loadMessages(forceRefresh: true); // Force refresh to get all old messages
     } else {
       print('ChatScreen: Manual refresh - trying to find existing thread again');
       // Force retry finding existing thread
       _lastRefreshTime = null;
       _currentThreadId = null; // Reset to force re-search
-      _loadMessages();
+      _loadMessages(forceRefresh: true); // Force refresh to get all old messages
     }
   }
 
@@ -1790,7 +1845,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   Widget _buildMessagesList(UserModel? currentUser) {
     return RefreshIndicator(
       onRefresh: () async {
+        // Force refresh to ensure all old messages are loaded
         _manualRefresh();
+        // Wait a bit for the refresh to complete
+        await Future.delayed(const Duration(milliseconds: 500));
       },
       child: ListView.builder(
         controller: _scrollController,

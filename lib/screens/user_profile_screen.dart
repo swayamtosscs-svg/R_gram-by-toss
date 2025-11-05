@@ -20,6 +20,7 @@ import '../screens/highlight_viewer_screen.dart';
 import '../test_follow_status_debug.dart';
 import '../services/posts_management_service.dart';
 import '../services/reels_management_service.dart';
+import '../services/api_service.dart';
 
 class UserProfileScreen extends StatefulWidget {
   final String userId;
@@ -62,6 +63,8 @@ class _UserProfileScreenState extends State<UserProfileScreen>
   int _realFollowingCount = 0;
   bool _isLoadingFollowers = false;
   bool _isLoadingFollowing = false;
+  bool _isBlocked = false;
+  bool _isCheckingBlockStatus = false;
 
   String get _targetUserId => widget.userId;
 
@@ -79,6 +82,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
     });
     _checkFollowingStatus();
     _loadRealCounts();
+    _checkBlockStatus();
     // Load posts initially
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadUserPosts();
@@ -104,6 +108,226 @@ class _UserProfileScreenState extends State<UserProfileScreen>
       }
     } catch (e) {
       print('Error checking following status: $e');
+    }
+  }
+
+  /// Check if the current user has blocked the target user
+  Future<void> _checkBlockStatus() async {
+    try {
+      setState(() {
+        _isCheckingBlockStatus = true;
+      });
+
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final token = authProvider.authToken;
+
+      if (token == null) {
+        setState(() {
+          _isCheckingBlockStatus = false;
+        });
+        return;
+      }
+
+      final isBlocked = await ApiService.isUserBlocked(
+        userId: widget.userId,
+        token: token,
+      );
+
+      if (mounted) {
+        setState(() {
+          _isBlocked = isBlocked;
+          _isCheckingBlockStatus = false;
+        });
+      }
+    } catch (e) {
+      print('Error checking block status: $e');
+      if (mounted) {
+        setState(() {
+          _isCheckingBlockStatus = false;
+        });
+      }
+    }
+  }
+
+  /// Block the user
+  Future<void> _blockUser() async {
+    try {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final token = authProvider.authToken;
+
+      if (token == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please login to block users'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      // Show confirmation dialog
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Block User'),
+          content: Text('Are you sure you want to block ${widget.username}? You won\'t be able to see their posts or stories, and they won\'t be able to see yours.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('Block'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmed != true) return;
+
+      setState(() {
+        _isCheckingBlockStatus = true;
+      });
+
+      final response = await ApiService.blockUser(
+        userId: widget.userId,
+        token: token,
+      );
+
+      if (mounted) {
+        setState(() {
+          _isCheckingBlockStatus = false;
+        });
+
+        if (response['success'] == true) {
+          setState(() {
+            _isBlocked = true;
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${widget.username} has been blocked'),
+              backgroundColor: const Color(0xFF6366F1),
+            ),
+          );
+
+          // Refresh the profile to reflect blocked status
+          Navigator.pop(context);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(response['message'] ?? 'Failed to block user'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isCheckingBlockStatus = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Unblock the user
+  Future<void> _unblockUser() async {
+    try {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final token = authProvider.authToken;
+
+      if (token == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Please login to unblock users'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
+      // Show confirmation dialog
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Unblock User'),
+          content: Text('Are you sure you want to unblock ${widget.username}?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Unblock'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmed != true) return;
+
+      setState(() {
+        _isCheckingBlockStatus = true;
+      });
+
+      final response = await ApiService.unblockUser(
+        userId: widget.userId,
+        token: token,
+      );
+
+      if (mounted) {
+        setState(() {
+          _isCheckingBlockStatus = false;
+        });
+
+        if (response['success'] == true) {
+          setState(() {
+            _isBlocked = false;
+          });
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('${widget.username} has been unblocked'),
+              backgroundColor: const Color(0xFF6366F1),
+            ),
+          );
+
+          // Refresh the profile
+          _checkFollowingStatus();
+          _loadRealCounts();
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(response['message'] ?? 'Failed to unblock user'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isCheckingBlockStatus = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -282,6 +506,7 @@ class _UserProfileScreenState extends State<UserProfileScreen>
               onRefresh: () async {
                 print('Profile refresh triggered - loading latest data');
                 await _checkFollowingStatus();
+                await _checkBlockStatus();
                 await _loadUserMedia();
                 await _loadRealCounts(); // Also refresh followers/following counts
               },
@@ -329,8 +554,9 @@ class _UserProfileScreenState extends State<UserProfileScreen>
         IconButton(
           onPressed: () async {
             print('Manual refresh triggered - loading latest post counts');
-            // Refresh following status, posts, and counts
+            // Refresh following status, block status, posts, and counts
             await _checkFollowingStatus();
+            await _checkBlockStatus();
             await _loadUserMedia();
             await _loadRealCounts();
             
@@ -389,11 +615,75 @@ class _UserProfileScreenState extends State<UserProfileScreen>
           ),
         
         // More options
-        IconButton(
-          onPressed: () {
-            // Show more options
-          },
+        PopupMenuButton<String>(
           icon: const Icon(Icons.more_vert, color: Colors.black),
+          onSelected: (value) {
+            if (value == 'block') {
+              _blockUser();
+            } else if (value == 'unblock') {
+              _unblockUser();
+            } else if (value == 'report') {
+              // TODO: Implement report functionality
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Report functionality coming soon'),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+            }
+          },
+          itemBuilder: (context) {
+            // Don't show options if viewing own profile
+            final authProvider = Provider.of<AuthProvider>(context, listen: false);
+            if (_targetUserId == authProvider.userProfile?.id) {
+              return [];
+            }
+
+            final items = <PopupMenuEntry<String>>[];
+
+            if (_isBlocked) {
+              items.add(
+                const PopupMenuItem<String>(
+                  value: 'unblock',
+                  child: Row(
+                    children: [
+                      Icon(Icons.block, color: Colors.red),
+                      SizedBox(width: 8),
+                      Text('Unblock'),
+                    ],
+                  ),
+                ),
+              );
+            } else {
+              items.add(
+                const PopupMenuItem<String>(
+                  value: 'block',
+                  child: Row(
+                    children: [
+                      Icon(Icons.block, color: Colors.red),
+                      SizedBox(width: 8),
+                      Text('Block'),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            items.add(
+              const PopupMenuItem<String>(
+                value: 'report',
+                child: Row(
+                  children: [
+                    Icon(Icons.flag, color: Colors.orange),
+                    SizedBox(width: 8),
+                    Text('Report'),
+                  ],
+                ),
+              ),
+            );
+
+            return items;
+          },
         ),
       ],
     );

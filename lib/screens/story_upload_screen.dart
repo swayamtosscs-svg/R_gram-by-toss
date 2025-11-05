@@ -3,10 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:file_picker/file_picker.dart';
 import '../widgets/video_player_widget.dart';
 import 'package:provider/provider.dart';
 import '../services/story_service.dart';
 import '../services/media_upload_service.dart';
+import '../services/story_audio_service.dart';
+import '../services/predefined_audio_service.dart';
 import '../models/story_model.dart';
 import '../providers/auth_provider.dart';
 
@@ -30,6 +33,10 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
   bool _isCameraInUse = false; // Track if camera is currently active
   final ImagePicker _picker = ImagePicker();
   final TextEditingController _captionController = TextEditingController();
+  
+  // Audio selection variables
+  String? _songPath;
+  String? _songName;
 
   @override
   void dispose() {
@@ -358,6 +365,106 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
     }
   }
 
+  // Song select karne ka function (from device)
+  Future<void> _pickSong() async {
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.audio, // Sirf audio files
+      );
+
+      if (result != null && result.files.single.path != null) {
+        setState(() {
+          _songPath = result.files.single.path;
+          _songName = result.files.single.name;
+        });
+        _showSuccessSnackBar('Song selected: ${result.files.single.name}');
+      }
+    } catch (e) {
+      print('StoryUploadScreen: Error picking song: $e');
+      _showErrorSnackBar('Error selecting song: $e');
+    }
+  }
+
+  // Predefined audio select karne ka function
+  Future<void> _showPredefinedAudioDialog() async {
+    final predefinedAudios = PredefinedAudioService.getAllPredefinedAudios();
+    
+    if (predefinedAudios.isEmpty) {
+      _showErrorSnackBar('No predefined audio available');
+      return;
+    }
+
+    final selectedAudio = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Choose Predefined Audio'),
+        content: Container(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: predefinedAudios.length,
+            itemBuilder: (context, index) {
+              final audio = predefinedAudios[index];
+              return ListTile(
+                leading: Icon(Icons.music_note, color: Colors.orange),
+                title: Text(audio['name'] ?? 'Unknown'),
+                onTap: () => Navigator.pop(context, audio),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+
+    if (selectedAudio != null) {
+      setState(() {
+        _songPath = selectedAudio['path'];
+        _songName = selectedAudio['name'];
+      });
+      print('StoryUploadScreen: Predefined audio selected - Path: ${_songPath}, Name: ${_songName}');
+      _showSuccessSnackBar('Audio selected: ${selectedAudio['name']}');
+    }
+  }
+
+  // Show audio selection options dialog
+  Future<void> _showAudioSelectionDialog() async {
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Select Audio'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(Icons.folder, color: Colors.blue),
+              title: Text('Choose from Device'),
+              subtitle: Text('Select audio from your device'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickSong();
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.library_music, color: Colors.orange),
+              title: Text('Choose Predefined Audio'),
+              subtitle: Text('Select from app audio library'),
+              onTap: () {
+                Navigator.pop(context);
+                _showPredefinedAudioDialog();
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _initializeVideoController() {
     if (_selectedMedia != null) {
       if (kIsWeb) {
@@ -439,6 +546,21 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
       print('StoryUploadScreen: Upload result - Message: ${result.message}');
 
       if (result.success) {
+        // Store audio info if audio is selected
+        if (_songPath != null && _songPath!.isNotEmpty && result.story != null) {
+          print('StoryUploadScreen: Storing audio for story ${result.story!.id}');
+          print('StoryUploadScreen: Audio Path: $_songPath');
+          print('StoryUploadScreen: Audio Name: $_songName');
+          await StoryAudioService.storeStoryAudio(
+            storyId: result.story!.id,
+            audioPath: _songPath,
+            audioName: _songName,
+          );
+          print('StoryUploadScreen: Audio stored successfully for story ${result.story!.id}');
+        } else {
+          print('StoryUploadScreen: No audio to store - Path: $_songPath, Story: ${result.story?.id}');
+        }
+        
         if (result.message.contains('locally')) {
           _showSuccessSnackBar('Story uploaded and stored locally! (Server unavailable)');
         } else {
@@ -756,6 +878,102 @@ class _StoryUploadScreenState extends State<StoryUploadScreen> {
                 ),
                 maxLines: 3,
                 maxLength: 200,
+              ),
+            ),
+
+          // Song Selection Buttons (Optional)
+          if (_selectedMedia != null)
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Column(
+                children: [
+                  // Main audio selection button
+                  ElevatedButton.icon(
+                    onPressed: _showAudioSelectionDialog,
+                    icon: Icon(Icons.music_note),
+                    label: Text(_songName ?? 'Add Music (Optional)'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _songPath != null ? Colors.orange : Colors.grey[800],
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      minimumSize: const Size(double.infinity, 48),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                  // Quick access buttons
+                  if (_songPath == null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8.0),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _pickSong,
+                              icon: Icon(Icons.folder, size: 18),
+                              label: Text('Device', style: TextStyle(fontSize: 12)),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.white,
+                                side: BorderSide(color: Colors.grey[700]!),
+                                padding: EdgeInsets.symmetric(vertical: 8),
+                              ),
+                            ),
+                          ),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _showPredefinedAudioDialog,
+                              icon: Icon(Icons.library_music, size: 18),
+                              label: Text('Library', style: TextStyle(fontSize: 12)),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.orange,
+                                side: BorderSide(color: Colors.orange),
+                                padding: EdgeInsets.symmetric(vertical: 8),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+
+          if (_songName != null && _selectedMedia != null)
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.green.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.green, width: 1),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.check_circle, color: Colors.green, size: 16),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Music: $_songName',
+                      style: TextStyle(color: Colors.green, fontSize: 12),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (_songPath != null)
+                    IconButton(
+                      icon: Icon(Icons.close, size: 18, color: Colors.white),
+                      onPressed: () {
+                        setState(() {
+                          _songPath = null;
+                          _songName = null;
+                        });
+                      },
+                      padding: EdgeInsets.zero,
+                      constraints: BoxConstraints(),
+                    ),
+                ],
               ),
             ),
 

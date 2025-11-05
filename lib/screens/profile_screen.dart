@@ -26,6 +26,7 @@ import '../screens/create_highlight_screen.dart';
 import '../screens/highlight_viewer_screen.dart';
 import '../services/posts_management_service.dart';
 import '../services/reels_management_service.dart';
+import '../screens/blocked_users_screen.dart';
 
 
 class ProfileScreen extends StatefulWidget {
@@ -1758,6 +1759,16 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
             ],
           ),
         ),
+      const PopupMenuItem(
+        value: 'blocked_users',
+        child: Row(
+          children: [
+            Icon(Icons.block, color: Color(0xFFE53E3E), size: 20),
+            SizedBox(width: 8),
+            Text('Blocked Users'),
+          ],
+        ),
+      ),
       const PopupMenuDivider(), // Add separator
       const PopupMenuItem(
         value: 'logout',
@@ -1819,6 +1830,13 @@ class _ProfileScreenState extends State<ProfileScreen> with TickerProviderStateM
         }
       } else if (value == 'toggle_privacy') {
         _handlePrivacyToggle(context);
+      } else if (value == 'blocked_users') {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const BlockedUsersScreen(),
+          ),
+        );
       } else if (value == 'logout') {
         _showLogoutDialog(context);
       }

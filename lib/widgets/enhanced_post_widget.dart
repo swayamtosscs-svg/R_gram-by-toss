@@ -802,21 +802,59 @@ class _EnhancedPostWidgetState extends State<EnhancedPostWidget> {
       } else {
         if (mounted) {
           String errorMessage = response?['message'] ?? 'Failed to like post';
-          
-          // Provide more specific error messages based on the response
-          if (errorMessage.contains('Post not found')) {
-            errorMessage = 'This post is not available on the server. Like saved locally.';
-          } else if (errorMessage.contains('locally')) {
-            errorMessage = 'Like saved locally (offline mode)';
+
+          // If server says it's already in desired state, update UI accordingly
+          final lowerMsg = errorMessage.toLowerCase();
+          bool treatedAsSuccess = false;
+          bool newIsLiked = _isLiked;
+          int newLikeCount = _likeCount;
+
+          if (lowerMsg.contains('already liked')) {
+            // Ensure UI shows liked state
+            treatedAsSuccess = true;
+            newIsLiked = true;
+            newLikeCount = _isLiked ? _likeCount : _likeCount + 1;
+          } else if (lowerMsg.contains('already unliked') || lowerMsg.contains('not liked')) {
+            // Ensure UI shows unliked state
+            treatedAsSuccess = true;
+            newIsLiked = false;
+            newLikeCount = _isLiked ? _likeCount - 1 : _likeCount;
           }
-          
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(errorMessage),
-              backgroundColor: errorMessage.contains('locally') ? Colors.orange : Colors.red,
-              duration: const Duration(seconds: 3),
-            ),
-          );
+
+          if (treatedAsSuccess) {
+            setState(() {
+              _isLiked = newIsLiked;
+              _likeCount = newLikeCount;
+            });
+
+            // Update cache so it persists
+            final cacheKey = widget.post.id;
+            _likeStatusCache[cacheKey] = newIsLiked;
+            _likeCountCache[cacheKey] = newLikeCount;
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(newIsLiked ? 'Liked!' : 'Unliked!'),
+                duration: const Duration(seconds: 2),
+                backgroundColor: newIsLiked ? Colors.green : Colors.blue,
+              ),
+            );
+          } else {
+            // Provide more specific error messages based on the response
+            if (errorMessage.contains('Post not found')) {
+              errorMessage = 'This post is not available on the server. Like saved locally.';
+            } else if (errorMessage.contains('locally')) {
+              errorMessage = 'Like saved locally (offline mode)';
+            }
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(errorMessage),
+                backgroundColor: errorMessage.contains('locally') ? Colors.orange : Colors.red,
+                duration: const Duration(seconds: 3),
+              ),
+            );
+          }
         }
       }
     } catch (e) {

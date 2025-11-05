@@ -1539,4 +1539,134 @@ class ApiService {
       };
     }
   }
+
+  // Block User API
+  static Future<Map<String, dynamic>> blockUser({
+    required String userId,
+    required String token,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/block/$userId'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      print('Block User API response status: ${response.statusCode}');
+      print('Block User API response body: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return jsonDecode(response.body);
+      } else {
+        return {
+          'success': false,
+          'message': 'Failed to block user. Status: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      print('Block User API error: $e');
+      return {
+        'success': false,
+        'message': 'Network error: $e',
+      };
+    }
+  }
+
+  // Unblock User API
+  static Future<Map<String, dynamic>> unblockUser({
+    required String userId,
+    required String token,
+  }) async {
+    try {
+      final response = await http.delete(
+        Uri.parse('$baseUrl/api/block/$userId'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      print('Unblock User API response status: ${response.statusCode}');
+      print('Unblock User API response body: ${response.body}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return jsonDecode(response.body);
+      } else {
+        return {
+          'success': false,
+          'message': 'Failed to unblock user. Status: ${response.statusCode}',
+        };
+      }
+    } catch (e) {
+      print('Unblock User API error: $e');
+      return {
+        'success': false,
+        'message': 'Network error: $e',
+      };
+    }
+  }
+
+  // Get Blocked Users List API
+  static Future<Map<String, dynamic>> getBlockedUsers({
+    required String token,
+  }) async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/api/user/blocked'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+      );
+
+      print('Get Blocked Users API response status: ${response.statusCode}');
+      print('Get Blocked Users API response body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        return {
+          'success': false,
+          'message': 'Failed to get blocked users. Status: ${response.statusCode}',
+          'data': {
+            'blockedUsers': [],
+            'totalBlocked': 0,
+          },
+        };
+      }
+    } catch (e) {
+      print('Get Blocked Users API error: $e');
+      return {
+        'success': false,
+        'message': 'Network error: $e',
+        'data': {
+          'blockedUsers': [],
+          'totalBlocked': 0,
+        },
+      };
+    }
+  }
+
+  // Check if user is blocked
+  static Future<bool> isUserBlocked({
+    required String userId,
+    required String token,
+  }) async {
+    try {
+      final response = await getBlockedUsers(token: token);
+      
+      if (response['success'] == true && response['data'] != null) {
+        final blockedUsers = response['data']['blockedUsers'] as List?;
+        if (blockedUsers != null) {
+          return blockedUsers.any((user) => user['_id'] == userId);
+        }
+      }
+      return false;
+    } catch (e) {
+      print('Check blocked status error: $e');
+      return false;
+    }
+  }
 } 
